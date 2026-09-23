@@ -28,6 +28,7 @@ from webtoon_downloader.core.webtoon.downloaders.options import (
     WebtoonDownloadOptions,
 )
 from webtoon_downloader.core.webtoon.exporter import DataExporterFormat
+from webtoon_downloader.core.webtoon.namer import ChapterNamingMode
 from webtoon_downloader.transformers.image import ImageFormat
 
 help_config = click.RichHelpConfiguration(
@@ -54,6 +55,17 @@ def validate_quality(ctx: Any, param: Any, value: int) -> int:
         raise CLIInvalidQualityError(value)
 
     return value
+
+
+def normalize_chapter_naming(_ctx: Any, _param: Any, value: str) -> ChapterNamingMode:
+    """Normalize chapter naming aliases to their canonical values."""
+    normalized = value.lower()
+    if normalized in {"t", "title"}:
+        return "title"
+    if normalized in {"n", "number"}:
+        return "number"
+    # Click validates the accepted values before invoking this callback.
+    return "number-title"
 
 
 def _unwrap_error_chain(exc: Exception) -> list[str]:
@@ -126,6 +138,15 @@ def _unwrap_error_chain(exc: Exception) -> list[str]:
     help="Download each chapter in separate folders",
 )
 @click.option(
+    "--chapter-naming",
+    "-N",
+    type=click.Choice(["title", "number", "number-title", "t", "n", "nt"], case_sensitive=False),
+    default="number-title",
+    show_default=True,
+    callback=normalize_chapter_naming,
+    help="Naming format for chapter directories when using --separate",
+)
+@click.option(
     "--dest",
     callback=webtoon_downloader.cmd.exceptions.handle_deprecated_options,
     type=str,
@@ -185,6 +206,7 @@ def cli(  # noqa: C901
     out: str,
     image_format: ImageFormat,
     separate: bool,
+    chapter_naming: ChapterNamingMode,
     export_metadata: bool,
     export_format: DataExporterFormat,
     save_as: StorageType,
@@ -233,6 +255,7 @@ def cli(  # noqa: C901
         export_metadata=export_metadata,
         exporter_format=export_format,
         separate=separate,
+        chapter_mode=chapter_naming,
         image_format=image_format,
         save_as=save_as,
         chapter_progress_callback=progress_manager.advance_progress,

@@ -2,21 +2,46 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from furl import furl
 
 from webtoon_downloader.core.webtoon.models import ChapterInfo, PageInfo
 
+ChapterNamingMode: TypeAlias = Literal["title", "number", "number-title"]
+"""Valid modes for naming separate chapter directories."""
+
+_WINDOWS_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED_FILENAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+class InvalidChapterNamingModeError(ValueError):
+    """Raised when a chapter directory naming mode is unsupported."""
+
+    def __init__(self, mode: object) -> None:
+        super().__init__(f"Unsupported chapter naming mode: {mode}")
+
 
 def sanitize_filename(filename: str) -> str:
-    """
-    Sanitizes a filename by replacing all non-alphanumeric characters with underscores on Windows.
-    """
+    """Return a safe filename while preserving readable spaces and parentheses."""
+    # A forward slash creates nested paths on every supported platform.
+    filename = filename.replace("/", "_").replace("\x00", "_")
+
     if os.name == "nt":
-        filename = re.sub(r"[^\w\.-]", "_", filename)
-        if filename[-1] == "_":
-            filename = filename[:-1]
+        filename = _WINDOWS_INVALID_FILENAME_CHARS.sub("_", filename).rstrip(" .")
+        stem = filename.split(".", maxsplit=1)[0].upper()
+        if stem in _WINDOWS_RESERVED_FILENAMES:
+            filename = f"_{filename}"
+
+    if filename in {"", ".", ".."}:
+        return "_"
 
     return filename
 
@@ -55,15 +80,27 @@ class SeparateFileNameGenerator(FileNameGenerator):
     """
 
     use_chapter_title_directories: bool = False
+    chapter_mode: ChapterNamingMode | None = None
+
+    def __post_init__(self) -> None:
+        if self.chapter_mode not in {None, "title", "number", "number-title"}:
+            raise InvalidChapterNamingModeError(self.chapter_mode)
 
     def get_chapter_directory(self, chapter_info: ChapterInfo) -> Path:
         """
         Returns the directory path for storing the given chapter's data.
         """
-        if self.use_chapter_title_directories:
-            return Path(sanitize_filename(chapter_info.title))
+        chapter_mode = self.chapter_mode
+        if chapter_mode is None:
+            chapter_mode = "title" if self.use_chapter_title_directories else "number"
 
-        return Path(f"{chapter_info.number:0{len(str(chapter_info.total_chapters))}d}")
+        chapter_number = f"{chapter_info.number:0{len(str(chapter_info.total_chapters))}d}"
+        if chapter_mode == "title":
+            return Path(sanitize_filename(chapter_info.title))
+        if chapter_mode == "number":
+            return Path(chapter_number)
+
+        return Path(f"{chapter_number}-{sanitize_filename(chapter_info.title)}")
 
     def get_page_filename(self, page_info: PageInfo) -> str:
         """

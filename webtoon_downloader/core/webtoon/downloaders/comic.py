@@ -243,7 +243,7 @@ async def download_webtoon(opts: WebtoonDownloadOptions) -> list[DownloadResult]
         A list of download results for each chapter.
     """
     file_name_generator = (
-        SeparateFileNameGenerator(use_chapter_title_directories=True)
+        SeparateFileNameGenerator(chapter_mode=opts.chapter_mode)
         if opts.separate
         else NonSeparateFileNameGenerator()
     )

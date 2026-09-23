@@ -6,6 +6,7 @@ from typing import Literal, TypeAlias
 from webtoon_downloader.core.webtoon.client import RetryStrategy
 from webtoon_downloader.core.webtoon.downloaders.callbacks import ChapterProgressCallback, OnWebtoonFetchCallback
 from webtoon_downloader.core.webtoon.exporter import DataExporterFormat
+from webtoon_downloader.core.webtoon.namer import ChapterNamingMode
 from webtoon_downloader.transformers.image import ImageFormat
 
 StorageType: TypeAlias = Literal["images", "zip", "cbz", "pdf"]
@@ -33,6 +34,7 @@ class WebtoonDownloadOptions:
         export_metadata           : Flag to export webtoon and chapter metadata.
         exporter_forma            : Format for exporting metadata.
         separate                  : Flag to store each chapter in separate directories.
+        chapter_mode               : Naming mode for separate chapter directories.
         save_as                   : Format to save chapters.
         image_format              : Format to save chapter images.
         chapter_progress_callback : Callback function for chapter download progress.
@@ -57,6 +59,7 @@ class WebtoonDownloadOptions:
     exporter_format: DataExporterFormat = "json"
 
     separate: bool = True
+    chapter_mode: ChapterNamingMode = "number-title"
     save_as: StorageType = "images"
     image_format: ImageFormat = "JPG"
 
