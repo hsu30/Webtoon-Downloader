@@ -9,7 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, NamedTuple
 
-import fitz
+import pymupdf
 from PIL import Image
 
 from .exceptions import stream_error_handler
@@ -54,7 +54,7 @@ class AioPdfWriter:
 
     container: io.BytesIO | IO[bytes] | PathLike[str]
 
-    _doc: fitz.Document = field(init=False)
+    _doc: pymupdf.Document = field(init=False)
     _pages_data: list[PageData] = field(init=False)
 
     @stream_error_handler
@@ -62,7 +62,7 @@ class AioPdfWriter:
         if isinstance(self.container, str | PathLike):
             Path(self.container).parent.mkdir(parents=True, exist_ok=True)
         self._pages_data = []
-        self._doc = fitz.open()
+        self._doc = pymupdf.open()
         return self
 
     @stream_error_handler
@@ -130,7 +130,7 @@ class AioPdfWriter:
         """
         page = self._doc.new_page(-1, width=page_data.dimension.width, height=page_data.dimension.height)  # pyright: ignore[reportAttributeAccessIssue]
 
-        page.insert_image(
-            fitz.Rect(0, 0, page_data.dimension.width, page_data.dimension.height),
+        page.insert_image(  # type: ignore[attr-defined]
+            pymupdf.Rect(0, 0, page_data.dimension.width, page_data.dimension.height),
             stream=page_data.stream,
         )

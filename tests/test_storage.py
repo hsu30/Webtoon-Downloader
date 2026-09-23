@@ -6,7 +6,7 @@ import tempfile
 import zipfile
 from collections.abc import AsyncIterator
 
-import fitz
+import pymupdf
 import pytest
 from PIL import Image
 
@@ -67,7 +67,7 @@ async def test_pdf_writer() -> None:
             for idx, img in enumerate(test_images):
                 await writer.write(async_iter_image(img), f"image_{idx}.jpg")
 
-        with fitz.open(f) as doc:
+        with pymupdf.open(f) as doc:
             assert len(doc) == len(test_images)  # Check number of pages
 
             for page_num, img in enumerate(test_images):
