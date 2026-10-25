@@ -9,7 +9,9 @@ import logging
 import os
 import re
 import shutil
+import sys
 import uuid
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,7 @@ from webtoon_downloader.core.webtoon.downloaders.state import (
     checked_path,
     exclusive_lock,
     image_evidence,
+    output_lock,
     publication_lock,
     publish_file,
     read_json,
@@ -104,6 +107,10 @@ class ReliableDownloader:
         self.run_id = uuid.uuid4().hex
         self.series_metadata: WebtoonMainPageExtractor | None = None
         self.report: Path | None = None
+        self.failure_retryable = False
+        self.chapter_failures: dict[int, bool] = {}
+        self.output_guard = ExitStack()
+        self.owns_output = False
 
     async def run(self) -> BatchResult:
         failure = None
@@ -113,7 +120,20 @@ class ReliableDownloader:
             self.interrupted = True
         except Exception as error:
             failure = error_name(error)
-        return self._finish(failure)
+            self.failure_retryable = retryable(error)
+        try:
+            if not self.owns_output:
+                try:
+                    checked_path(self.root, ".webtoon-downloader")
+                    self.root.mkdir(parents=True, exist_ok=True)
+                    self.output_guard.enter_context(output_lock(self.root))
+                    self.owns_output = True
+                except Exception as error:
+                    failure = f"output_unavailable: {error_name(error)}"
+                    self.failure_retryable = False
+            return self._finish(failure)
+        finally:
+            self.output_guard.close()
 
     async def _run(self) -> None:
         inventory = await WebtoonFetcher(self.client, self.url).get_inventory(self.url)
@@ -122,6 +142,15 @@ class ReliableDownloader:
             self.root = Path(slugify_name(inventory.chapters[0].series_title))
         checked_path(self.root, ".webtoon-downloader")
         self.root.mkdir(parents=True, exist_ok=True)
+        self.output_guard.enter_context(output_lock(self.root))
+        self.owns_output = True
+        if (
+            self.options.result_file
+            and self.options.result_file != "-"
+            and not self.options.keep_workspace
+            and Path(self.options.result_file).resolve().is_relative_to((self.root / ".webtoon-downloader").resolve())
+        ):
+            raise IntegrityError("explicit_report_inside_cleaned_workspace_use_keep_workspace")
         self.series_metadata = WebtoonMainPageExtractor((await self.client.get(self.url)).text)
         chapters = [chapter for chapter in inventory.chapters if chapter.data_episode_no in self.scope.episode_ids]
         if self.options.on_webtoon_fetched:
@@ -208,6 +237,9 @@ class ReliableDownloader:
             )
         except Exception as error:
             result = self._recover_result(chapter, work, False, error_name(error))
+            self.chapter_failures.setdefault(chapter.data_episode_no, retryable(error))
+        if result.is_complete:
+            self.chapter_failures.pop(chapter.data_episode_no, None)
         self.results[chapter.data_episode_no] = result
         return result
 
@@ -315,6 +347,8 @@ class ReliableDownloader:
         )
         if previous.get("kind") == self.options.save_as and previous.get("separate") == self.options.separate:
             target = previous["target"]
+        elif self.options.save_as == "images" and self.options.separate and self.options.chapter_mode == "number-title":
+            target = self._existing_target(chapter, target)
         checked_path(self.root, target)
         settings = [self.options.image_format.lower(), self.options.quality]
         reusable = previous.get("pages", []) if previous.get("content_settings") == settings else []
@@ -339,6 +373,19 @@ class ReliableDownloader:
             "previous_names": [item["name"] for item in previous.get("expected", [])],
             "failures": [],
         }
+
+    def _existing_target(self, chapter: ChapterInfo, target: str) -> str:
+        # A growing inventory can change zero padding (09 -> 009). Preserve existing folder names.
+        matches = [
+            path
+            for path in self.root.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and re.fullmatch(rf"0*{chapter.number}-{re.escape(target.split('-', 1)[1])}", path.name)
+        ]
+        if len(matches) > 1:
+            raise IntegrityError("ambiguous_existing_chapter_folders")
+        return matches[0].name if matches else target
 
     def _validate_page_list(self, previous: dict[str, Any], urls: list[str], work: Path) -> None:
         if (
@@ -392,6 +439,9 @@ class ReliableDownloader:
                     atomic_json(work / "manifest.json", manifest)
             errors = [task.exception() for task in tasks if not task.cancelled() and task.exception() is not None]
             if errors:
+                self.chapter_failures[chapter.data_episode_no] = all(
+                    isinstance(error, Exception) and retryable(error) for error in errors
+                )
                 first_error = errors[0]
                 if first_error is not None:
                     raise first_error
@@ -725,6 +775,90 @@ class ReliableDownloader:
         if self.options.chapter_progress_callback:
             await self.options.chapter_progress_callback(chapter, event, extractor)
 
+    def _clean_successful_workspace(self) -> None:  # noqa: C901 - fail closed before recursive cache removal
+        """Remove only recognized cache data, never backups, links or another unfinished scope."""
+        if not self.owns_output or self.scope is None:
+            return
+        base = self._base()
+        if not base.exists():
+            return
+        # Resolve and inspect the exact namespace before any recursive removal.
+        cache = checked_path(self.root, ".webtoon-downloader")
+        if base.resolve().parent != cache.resolve() or not base.resolve().is_relative_to(self.root.resolve()):
+            raise IntegrityError("unsafe_cleanup_target")
+        if any(path.name not in {base.name, "publish.lock"} for path in cache.iterdir()):
+            raise IntegrityError("workspace_cleanup_other_work_remains")
+        resolved_base = base.resolve()
+        for path in base.rglob("*"):
+            if (
+                path.is_symlink()
+                or getattr(path.lstat(), "st_file_attributes", 0) & 0x400
+                or os.path.ismount(path)
+                or not path.resolve().is_relative_to(resolved_base)
+                or path.name.startswith("backup-")
+            ):
+                raise IntegrityError("workspace_cleanup_preserves_links_or_backups")
+        if any(path.name not in {"chapters", "results"} for path in base.iterdir()):
+            raise IntegrityError("workspace_cleanup_unknown_content")
+        for chapter in (base / "chapters").iterdir():
+            if not chapter.is_dir() or not chapter.name.isdecimal():
+                raise IntegrityError("workspace_cleanup_unknown_chapter")
+            manifest = read_json(chapter / "manifest.json")
+            if manifest.get("series") != asdict(self.scope.inventory.series):
+                raise IntegrityError("workspace_cleanup_identity_mismatch")
+            if manifest.get("completed") is not True:
+                # A successful incremental range must not discard another failed range.
+                raise IntegrityError("workspace_cleanup_unfinished_chapters")
+            allowed = {"manifest.json", "chapter.lock", "pages"}
+            if any(
+                p.name not in allowed and not re.fullmatch(r"artifact-[0-9a-f]{32}", p.name) for p in chapter.iterdir()
+            ):
+                raise IntegrityError("workspace_cleanup_unknown_content")
+            pages = chapter / "pages"
+            if pages.exists() and any(
+                not p.is_file() or not re.fullmatch(r"[0-9a-f]{32}\.[A-Za-z0-9]+", p.name) for p in pages.iterdir()
+            ):
+                raise IntegrityError("workspace_cleanup_unknown_page")
+        reports = base / "results"
+        if reports.exists():
+            for path in reports.iterdir():
+                if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name) or read_json(path).get("series") != asdict(
+                    self.scope.inventory.series
+                ):
+                    raise IntegrityError("workspace_cleanup_unknown_report")
+        shutil.rmtree(base)
+        if all(path.name == "publish.lock" and path.is_file() and not path.is_symlink() for path in cache.iterdir()):
+            for path in cache.iterdir():
+                path.unlink()
+            cache.rmdir()
+        sync_directory(self.root)
+
+    def _report_payload(self, result: BatchResult) -> dict[str, Any]:
+        payload: dict[str, Any] = report_value(asdict(result))
+        payload.update({
+            "schema_version": SCHEMA_VERSION,
+            "status": result.status,
+            "exit_code": result.exit_code,
+            "series": asdict(self.scope.inventory.series) if self.scope else None,
+            "expected_episode_ids": list(self.scope.episode_ids) if self.scope else [],
+            "incomplete_episode_ids": list(result.incomplete_episode_ids),
+            "run_id": self.run_id,
+        })
+        return payload
+
+    def _requested_report_failure(self, candidate: BatchResult) -> BatchResult | None:
+        if not candidate.is_complete or not self.options.result_file or self.options.result_file == "-":
+            return None
+        # A requested disk report must be writable before discarding recovery data.
+        try:
+            provisional = replace(candidate, report_written=True, report_path=Path(self.options.result_file))
+            atomic_json(Path(self.options.result_file), self._report_payload(provisional))
+        except Exception as failure:
+            return replace(
+                candidate, result_delivered=False, error=f"report_write_failed: {error_name(failure)}", retryable=False
+            )
+        return None
+
     def _finish(self, error: str | None) -> BatchResult:
         expected = self.scope.episode_ids if self.scope else ()
         if self.scope:
@@ -740,25 +874,48 @@ class ReliableDownloader:
             error=error,
             verification=self.options.verify,
             interruption_code=self.options.interruption_code,
+            retryable=(
+                self.failure_retryable if error else bool(self.chapter_failures) and all(self.chapter_failures.values())
+            ),
+        )
+        stdout_result = self.options.result_file == "-"
+        # No implicit report after success: default image output contains only chapter images.
+        candidate = replace(result, result_delivered=True)
+        report_failure = self._requested_report_failure(candidate)
+        if report_failure is not None:
+            return report_failure
+        if candidate.is_complete and not self.options.keep_workspace:
+            try:
+                self._clean_successful_workspace()
+            except Exception as failure:
+                result = replace(result, error=f"workspace_cleanup_failed: {error_name(failure)}", retryable=False)
+        memory_result = not self.options.result_file and (
+            not self.owns_output or (not self.options.keep_workspace and result.error is None and candidate.is_complete)
         )
         target = (
             Path(self.options.result_file)
             if self.options.result_file
             else self._base() / "results" / f"{self.run_id}.json"
         )
-        result = replace(result, report_written=True, report_path=target)
-        payload = report_value(asdict(result))
-        payload.update({
-            "schema_version": SCHEMA_VERSION,
-            "status": result.status,
-            "exit_code": result.exit_code,
-            "series": asdict(self.scope.inventory.series) if self.scope else None,
-            "expected_episode_ids": list(expected),
-            "incomplete_episode_ids": list(result.incomplete_episode_ids),
-            "run_id": self.run_id,
-        })
+        result = replace(
+            result,
+            report_written=not (stdout_result or memory_result),
+            result_delivered=True,
+            report_path=None if stdout_result or memory_result else target,
+        )
+        payload = self._report_payload(result)
         try:
-            atomic_json(target, payload)
+            if stdout_result:
+                sys.stdout.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n")
+                sys.stdout.flush()
+            elif not memory_result:
+                atomic_json(target, payload)
         except Exception as failure:
-            result = replace(result, report_written=False, error=f"report_write_failed: {error_name(failure)}")
+            result = replace(
+                result,
+                report_written=False,
+                result_delivered=False,
+                retryable=False,
+                error=f"report_write_failed: {error_name(failure)}",
+            )
         return result

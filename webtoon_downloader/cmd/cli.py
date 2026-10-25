@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import sys
 from collections.abc import Callable
 from typing import Any, Literal
 
 import rich_click as click
+from rich.console import Console
 
 import webtoon_downloader.cmd.exceptions
 import webtoon_downloader.logger
@@ -19,7 +21,8 @@ from webtoon_downloader.cmd.exceptions import (
 )
 from webtoon_downloader.cmd.progress import ChapterProgressManager, init_progress
 from webtoon_downloader.core.exceptions import DownloadError
-from webtoon_downloader.core.webtoon.client import RetryStrategy
+from webtoon_downloader.core.retry import retryable
+from webtoon_downloader.core.webtoon.client import RetryStrategy, WebtoonHttpClient
 from webtoon_downloader.core.webtoon.downloaders import comic
 from webtoon_downloader.core.webtoon.downloaders.options import (
     DEFAULT_CONCURRENT_CHAPTER_DOWNLOADS,
@@ -28,6 +31,7 @@ from webtoon_downloader.core.webtoon.downloaders.options import (
     WebtoonDownloadOptions,
 )
 from webtoon_downloader.core.webtoon.exporter import DataExporterFormat
+from webtoon_downloader.core.webtoon.fetchers import WebtoonFetcher
 from webtoon_downloader.core.webtoon.namer import ChapterNamingMode
 from webtoon_downloader.transformers.image import ImageFormat
 
@@ -117,6 +121,11 @@ def reliability_options(command: Callable[..., Any]) -> Callable[..., Any]:
             else "Cancel remaining work after the first failed chapter.",
         )(command)
     command = click.option(
+        "--keep-workspace",
+        is_flag=True,
+        help="Keep verification caches and the default JSON report after success (failures always keep them).",
+    )(command)
+    command = click.option(
         "--verify",
         type=click.Choice(["full", "quick"]),
         default="full",
@@ -124,7 +133,9 @@ def reliability_options(command: Callable[..., Any]) -> Callable[..., Any]:
         help="Full decodes and hashes; quick trusts unchanged recorded size and timestamps.",
     )(command)
     command = click.option(
-        "--result-file", type=click.Path(dir_okay=False, resolve_path=True), help="JSON result report path."
+        "--result-file",
+        type=click.Path(dir_okay=False, allow_dash=True, resolve_path=True),
+        help="JSON result report path, or - for JSON-only stdout without a report file.",
     )(command)
     command = click.option(
         "--retry-failed",
@@ -154,6 +165,9 @@ def reliability_options(command: Callable[..., Any]) -> Callable[..., Any]:
 @click.rich_config(help_config=help_config)
 @click.argument("url", required=True, type=str)
 @reliability_options
+@click.option(
+    "--inspect", "inspect_only", is_flag=True, help="Print verified public inventory JSON without downloading."
+)
 @click.option(
     "--start",
     "-s",
@@ -204,9 +218,9 @@ def reliability_options(command: Callable[..., Any]) -> Callable[..., Any]:
     help="Choose the format to save each downloaded chapter",
 )
 @click.option(
-    "--separate",
-    is_flag=True,
-    help="Download each chapter in separate folders",
+    "--separate/--no-separate",
+    default=None,
+    help="Download images in chapter folders (default); --no-separate selects flat output.",
 )
 @click.option(
     "--chapter-naming",
@@ -276,7 +290,7 @@ def cli(  # noqa: C901
     latest: bool,
     out: str,
     image_format: ImageFormat,
-    separate: bool,
+    separate: bool | None,
     chapter_naming: ChapterNamingMode,
     export_metadata: bool,
     export_format: DataExporterFormat,
@@ -287,13 +301,39 @@ def cli(  # noqa: C901
     retry_strategy: RetryStrategy | Literal["none"] | None,
     quality: int,
     debug: bool,
+    inspect_only: bool,
     **reliability: Any,
 ) -> None:
+    if inspect_only:
+
+        async def inspect_source() -> dict[str, object]:
+            async with WebtoonHttpClient(proxy=proxy) as client:
+                return await WebtoonFetcher(client, url).inspect()
+
+        try:
+            payload = asyncio.run(inspect_source())
+        except Exception as error:
+            click.echo(
+                json.dumps({
+                    "schema_version": 1,
+                    "operation": "inspect",
+                    "inventory_complete": False,
+                    "error": type(error).__name__,
+                    "retryable": retryable(error),
+                })
+            )
+            ctx.exit(1)
+        click.echo(json.dumps(payload, ensure_ascii=False))
+        ctx.exit(0)
+
+    machine_output = reliability.get("result_file") == "-"
     log, console = webtoon_downloader.logger.setup(
-        log_filename="webtoon_downloader.log" if debug else None,
-        enable_traceback=debug,
-        enable_console_logging=debug,
+        log_filename="webtoon_downloader.log" if debug and not machine_output else None,
+        enable_traceback=debug and not machine_output,
+        enable_console_logging=debug and not machine_output,
     )
+    if machine_output:
+        console = Console(stderr=True)
 
     if not url:
         console.print(
@@ -302,6 +342,8 @@ def cli(  # noqa: C901
         ctx.exit(1)
     if latest and (start or end):
         raise CLILatestWithStartOrEndError(ctx)
+    if separate is None:
+        separate = save_as == "images"
     if separate and (save_as != "images"):
         raise CLISeparateOptionWithNonImageSaveAsError(ctx)
     if start is not None and end is not None and start > end:

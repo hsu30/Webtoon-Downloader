@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Final, Literal, TypeAlias, cast
 
@@ -66,6 +66,31 @@ class WebtoonFetcher:
 
     client: WebtoonHttpClient
     series_url: str
+
+    async def inspect(self) -> dict[str, object]:
+        """Inspect public availability without creating any local workspace."""
+        inventory = await self.get_inventory(self.series_url)
+        response = await self.client.get(self.series_url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        if self._get_title_no(soup) != inventory.series.title_no:
+            raise InventoryContractError(InventoryProblem.INVALID_SERIES_IDENTITY)
+        status = "unknown"
+        day_info = soup.select_one(".day_info")
+        if soup.select_one(".day_info .txt_ico_completed"):
+            status = "completed"
+        elif day_info is not None and day_info.get_text(strip=True):
+            status = "ongoing"
+        return {
+            "schema_version": 1,
+            "operation": "inspect",
+            "series": asdict(inventory.series),
+            "inventory_complete": inventory.is_complete,
+            "publication_status": status,
+            "chapters": [asdict(chapter) for chapter in inventory.chapters],
+            "evidence": [asdict(page) for page in inventory.evidence],
+            "retryable": False,
+        }
 
     def _convert_url_domain(self, viewer_url: str, target_subdomain: WebtoonDomain) -> str:
         """Converts the provided Webtoon URL to the specified subdomain (default 'm')."""

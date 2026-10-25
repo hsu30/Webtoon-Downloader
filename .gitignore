@@ -85,9 +85,16 @@ dmypy.json
 
 # Local scheduling, subscriptions, diagnostics and verification artifacts
 /daily_runner.py
+/daily_runner_o.py
 /subscriptions.json
 /error_log.md
 /test_folder/
+/daily_runner_state/
+/daily_runner_reports/
+/.daily_runner_venv/
+/.daily_runner_downloader_venv/
+/daily_runner_requirements.txt
+/daily_runner_usage.md
 
 # Local reference material retained outside the distributed source tree
 /docs/download-reliability-plan.md

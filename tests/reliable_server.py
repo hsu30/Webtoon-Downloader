@@ -128,5 +128,6 @@ def download_options(destination: str, **changes: object) -> WebtoonDownloadOpti
         page_retries=1,
         chapter_retries=0,
         minimum_free_bytes=0,
+        keep_workspace=True,
     )
     return replace(original, **changes)

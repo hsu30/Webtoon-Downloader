@@ -240,7 +240,7 @@ async def download_webtoon_result(
     *,
     client: WebtoonHttpClient | None = None,
 ) -> BatchResult:
-    """Download the selected scope and always return a persisted, structured outcome."""
+    """Download the selected scope and return its verified, structured outcome."""
     from webtoon_downloader.core.webtoon.downloaders.reliable import ReliableDownloader
 
     if client is not None:

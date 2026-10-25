@@ -9,6 +9,7 @@ import io
 import json
 import os
 import sys
+import threading
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -20,6 +21,8 @@ from PIL import Image
 from webtoon_downloader.core.retry import ImageContentError, ResourceLimitError
 
 SCHEMA_VERSION = 1
+_OUTPUTS: set[str] = set()
+_OUTPUT_GUARD = threading.Lock()
 
 
 class IntegrityError(ValueError):
@@ -76,6 +79,63 @@ def read_json(path: Path) -> dict[str, Any]:
     ):
         raise IntegrityError("unsupported_state_schema")
     return payload
+
+
+@contextmanager
+def output_lock(root: Path) -> Iterator[None]:
+    """Serialize output publication/cleanup without leaving a lock file outside the workspace."""
+    key = str(root.resolve()).casefold() if sys.platform == "win32" else str(root.resolve())
+    with _OUTPUT_GUARD:
+        if key in _OUTPUTS:
+            raise WorkspaceBusyError("output_busy")
+        _OUTPUTS.add(key)
+    try:
+        with _platform_output_lock(root):
+            yield
+    finally:
+        with _OUTPUT_GUARD:
+            _OUTPUTS.remove(key)
+
+
+@contextmanager
+def _platform_output_lock(root: Path) -> Iterator[None]:
+    if sys.platform != "win32":
+        import fcntl
+
+        descriptor = os.open(root, os.O_RDONLY)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise WorkspaceBusyError("output_busy") from error
+            yield
+        finally:
+            os.close(descriptor)
+    else:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        name = hashlib.sha256(str(root.resolve()).casefold().encode()).hexdigest()
+        handle = kernel.CreateMutexW(None, False, f"Local\\WebtoonDownloader-{name}")
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        acquired = False
+        try:
+            acquired = kernel.WaitForSingleObject(handle, 0) in {0, 0x80}
+            if not acquired:
+                raise WorkspaceBusyError("output_busy")
+            yield
+        finally:
+            if acquired:
+                kernel.ReleaseMutex(handle)
+            kernel.CloseHandle(handle)
 
 
 @contextmanager

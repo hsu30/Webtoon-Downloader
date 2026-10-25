@@ -1,6 +1,6 @@
 # 可靠下載、校驗與恢復
 
-本頁說明下載器的重試、校驗、儲存及恢復行為。下載器只有在指定範圍的來源清單已核對、全部章節圖片驗證成功、產物已發布且結果報告保存成功時，才以 exit code `0` 結束。
+本頁說明下載器的重試、校驗、儲存及恢復行為。下載器只有在指定範圍的來源清單已核對、全部章節圖片驗證成功、產物已發布、收尾及指定結果輸出成功時，才以 exit code `0` 結束。
 
 ## 一般下載
 
@@ -17,6 +17,8 @@ webtoon-downloader "WEBTOON_URL" --separate -N nt --out "/downloads/webtoon"
 章節與圖片編號仍沿用總數補零規則。作品身分由語系、系列類型與 `title_no` 決定，章節由來源 `episode_no` 決定；資料夾標題或最大編號不作為完成依據。
 
 來源 API 的 cursor 必須走到終點，指定範圍超界、來源回應缺少證據、空 viewer 或缺頁都會失敗，不會默默縮小要求範圍。
+
+圖片預設分章存放。未要求額外輸出時，成功結束只留下章節資料夾與圖檔：工作區、暫存圖片及預設報告均會清除。失敗或中斷保留恢復資料。此預設同樣適用於手動 CLI 與排程呼叫，重跑沒有新章時也會收尾。
 
 ## 重試參數
 
@@ -54,7 +56,9 @@ webtoon-downloader "WEBTOON_URL" --separate -N nt \
 
 沒有 manifest 的舊資料會先取得來源、下載並驗證預期頁面；現有內容只有逐項符合當次內容 hash 與檔名集合時才採認，否則保留並報告衝突。這類資料不會僅因「有資料夾」或「頁數相同」被跳過。
 
-同一穩定章節已記錄的目標路徑會優先沿用，避免標題或補零寬度變動後自動建立第二套輸出。相同章節不能由兩個程序同時寫入；持久 lock 檔會保留，由 OS advisory lock 決定是否被使用，不需手動刪除看似過期的 lock 檔。
+同一穩定章節已記錄的目標路徑會優先沿用；缺少快取時也會沿用同編號及同標題、僅補零不同的既有資料夾。相同輸出目錄不能由兩個程序同時發布或清理；鎖定由 OS 管理，不在輸出目錄外增加 lock 檔。
+
+成功後預設不保留驗證快取，因此下一次重新校驗舊章可能需要重新下載來源圖片。需要保留快取以便跨次重用時，明確加入 `--keep-workspace`；失敗暫存不需要此參數就會保留。
 
 ## full 與 quick
 
@@ -67,7 +71,7 @@ PDF 無法直接嵌入的 WebP 會先轉為 PNG，完整驗證時比對解碼後
 
 ## 結果報告與失敗恢復
 
-預設每次在工作區 `results/` 保存一份具 `schema_version` 的 JSON。也能指定位置：
+預設失敗或中斷時，在工作區 `results/` 保存具 `schema_version` 的 JSON；成功時不留下預設報告。`--keep-workspace` 可保留成功報告，也能指定工作區以外的位置：
 
 ```bash
 webtoon-downloader "WEBTOON_URL" --separate --out "/downloads/webtoon" \
@@ -75,6 +79,10 @@ webtoon-downloader "WEBTOON_URL" --separate --out "/downloads/webtoon" \
 ```
 
 報告包含來源快照與 cursor 證據、預期章節、未完成章節、逐頁結果、實際嘗試次數、驗證等級與錯誤分類。對外可分享欄位中的 URL 會移除認證與非識別用途的 query；內部 manifest 為恢復需要保存原始來源 URL，應視為本地狀態。
+
+`--result-file -` 改為 stdout JSON，無論成功失敗都不建立報告檔；失敗的章節恢復資料仍保留。進度與診斷走 stderr。`result_delivered` 表示結果已交付；`report_written` 只表示磁碟報告寫入。`retryable` 是結構化重試建議，不應以錯誤字串推定。
+
+`--inspect` 可唯讀取得完整來源清單、cursor 證據與 `publication_status`（`completed`、`ongoing`、`unknown`），不建立工作區。公開清單章數只代表目前可用內容，不能單獨證明作品完結或本地歷史完整。
 
 ```bash
 webtoon-downloader "WEBTOON_URL" --separate --out "/downloads/webtoon" \
@@ -89,7 +97,7 @@ webtoon-downloader "WEBTOON_URL" --separate --out "/downloads/webtoon" \
 
 | Exit code | 含義 |
 | --- | --- |
-| `0` | 指定範圍全部完成並成功保存報告 |
+| `0` | 指定範圍全部完成、收尾與指定結果輸出成功 |
 | `1` | 部分完成、來源完整性未知、校驗／發布／報告失敗等執行錯誤 |
 | `2` | CLI 使用方式或參數錯誤 |
 | `130` | SIGINT／Ctrl+C 中止 |
@@ -103,7 +111,7 @@ webtoon-downloader "WEBTOON_URL" --separate --out "/downloads/webtoon" \
 - 平面圖片輸出：先驗證全部暫存圖片，再逐檔發布；檔案系統不提供多檔交易，因此消費端必須以章節 manifest／報告完成狀態判斷整章可用。額外的同章圖片不會被靜默接受或刪除。
 - ZIP／CBZ／PDF：先完成及驗證封裝，再以不覆寫目標的 hard link 發布。目標檔案系統需要支援 hard link；不支援時會準確失敗，不退回可能覆寫既有資料的做法。
 - 目標與工作區需位於同一檔案系統，且 advisory lock 必須在實際 NAS volume 上可靠運作。程式拒絕 symlink 路徑與越出工作區的 state 路徑。
-- 工作區、失敗暫存、備份與 lock 檔不自動刪除，因此需要預留空間。此版未提供清理指令。
+- 預設成功後清除已確認屬於本作品的工作區；失敗或中斷保留。遇到其他未完成工作、無法辨識內容、symlink 或唯一舊檔備份時，停止自動清理並回報非零，不刪除這些資料。`--keep-workspace` 可明確保留成功快取。
 
 預設 `--max-image-bytes 67108864`、`--max-image-pixels 100000000`、`--minimum-free-bytes 67108864`。較小記憶體的 NAS 可降低頁面併發與像素上限，例如：
 

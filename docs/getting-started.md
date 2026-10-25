@@ -13,14 +13,14 @@
 uv 會建立隔離環境，並提供 `webtoon-downloader` 指令：
 
 ```bash
-uv tool install --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
+uv tool install --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@master"
 uv tool update-shell
 ```
 
 若已使用 pipx：
 
 ```bash
-pipx install --backend uv --python python3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
+pipx install --backend uv --python python3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@master"
 pipx ensurepath
 ```
 
@@ -35,7 +35,7 @@ webtoon-downloader --help
 
 ## 更新或固定版本
 
-先在[版本 tag](https://github.com/hsu30/Webtoon-Downloader/tags)選定版本，再把下列 `REF` 換成 tag 或完整 commit SHA：
+最新版可使用 `master`；需要固定版本時，可在[版本 tag](https://github.com/hsu30/Webtoon-Downloader/tags)選定版本。下列 `REF` 可換成 `master`、tag 或完整 commit SHA：
 
 ```bash
 uv tool install --force --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@REF"

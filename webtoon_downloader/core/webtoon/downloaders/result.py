@@ -89,6 +89,8 @@ class BatchResult:
     report_path: Path | None = None
     verification: Literal["full", "quick"] = "full"
     interruption_code: Literal[130, 143] = 130
+    result_delivered: bool = False
+    retryable: bool = False
 
     @property
     def incomplete_episode_ids(self) -> tuple[int, ...]:
@@ -111,7 +113,7 @@ class BatchResult:
             and set(actual_ids) == set(self.scope.episode_ids)
             and all(chapter.series == self.scope.inventory.series for chapter in self.chapters)
             and all(chapter.is_complete for chapter in self.chapters)
-            and self.report_written
+            and (self.report_written or self.result_delivered)
             and not self.interrupted
             and self.error is None
         )

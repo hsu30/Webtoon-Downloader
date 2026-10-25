@@ -22,7 +22,7 @@ webtoon-downloader [OPTIONS] URL
 | --- | --- |
 | `--out`／`-o` | 直接存放章節產物的目錄 |
 | `--save-as`／`-sa` | `images`（預設）、`zip`、`cbz`、`pdf` |
-| `--separate` | 圖片每章一個資料夾；不可與封裝格式合用 |
+| `--separate`／`--no-separate` | 圖片預設每章一個資料夾；後者改為平面輸出。封裝格式預設不使用 separate |
 | `--chapter-naming`／`-N` | 分章資料夾命名：`title`／`t`、`number`／`n`、`number-title`／`nt`；預設 `number-title` |
 
 ```bash
@@ -30,7 +30,9 @@ webtoon-downloader "WEBTOON_URL" --separate -N nt --out "./downloads"
 webtoon-downloader "WEBTOON_URL" --save-as cbz --out "./downloads"
 ```
 
-章節與頁碼依總數補零；合法空白、中文與括號會保留。不加 `--separate` 時，圖片使用平面輸出。
+章節與頁碼依總數補零；合法空白、中文與括號會保留。圖片預設採分章 `number-title` 資料夾。
+
+正常成功後只留下要求的章節產物，`.webtoon-downloader` 工作區會清除；失敗或中斷保留供續傳。既有使用者檔案、唯一舊檔備份與其他未完成工作不會被清除；無法安全清理時回傳非零碼並保留診斷。
 
 ## 圖片與 metadata
 
@@ -55,6 +57,8 @@ webtoon-downloader "WEBTOON_URL" --separate --out "./downloads" --retry-failed "
 
 `--verify full` 是預設；`quick` 主要比對可信既有狀態的集合、大小與時間戳記。`--retry-strategy none` 關閉自動重試，`--fail-fast` 會在首章失敗後取消其餘工作並收尾。
 
+`--keep-workspace` 明確保留成功後的校驗快取與預設報告。成功清除快取後，下次驗證舊章會重新取得來源內容，不能期待跨次零下載重用。
+
 所有次數、退避、timeout、時間預算、校驗及資源上限的完整說明，見[可靠下載與恢復](download-reliability.md)。
 
 ## 併發與網路
@@ -70,11 +74,15 @@ webtoon-downloader "WEBTOON_URL" --separate --proxy "http://127.0.0.1:7890"
 
 ## 診斷與排程
 
+`--inspect` 只輸出完整公開章節清單、分頁證據與官方作品狀態 JSON，不下載或寫檔。官方狀態未知時為 `unknown`，不代表完結。
+
+`--result-file -` 將唯一一份結果 JSON 寫入 stdout，進度寫入 stderr，不建立結果檔。排程可使用這個介面，搭配 exit code 判定結果。結果新增 `result_delivered` 與 `retryable`；stdout 模式的 `report_written` 為 `false`。
+
 `--debug` 啟用較詳細的診斷並寫入 `webtoon_downloader.log`。分享 log 前請遮蔽認證、代理資訊與不需要公開的路徑。
 
 | Exit code | 意義 |
 | --- | --- |
-| `0` | 指定範圍全部驗證完成，報告已保存 |
+| `0` | 指定範圍全部驗證完成、收尾及指定結果輸出成功；或 inspect 成功 |
 | `1` | 未完成、來源未知、校驗或執行失敗 |
 | `2` | 參數錯誤 |
 | `130`／`143` | SIGINT／SIGTERM 中止 |

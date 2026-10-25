@@ -86,6 +86,7 @@ class WebtoonDownloadOptions:
     verify: Literal["full", "quick"] = "full"
     fail_fast: bool = False
     result_file: str | None = None
+    keep_workspace: bool = False
     retry_failed: str | None = None
     max_image_bytes: int = 64 * 1024 * 1024
     max_image_pixels: int = 100_000_000

@@ -19,18 +19,18 @@
 
 ## 安裝
 
-需要 Python **3.10 以上**與 Git。以下從本倉庫的固定 tag 安裝；PyPI 上的同名套件不代表此倉庫版本。
+需要 Python **3.10 以上**與 Git。以下從本倉庫的 `master` 分支安裝最新版；PyPI 上的同名套件不代表此倉庫版本。
 
 使用 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
-uv tool install --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
+uv tool install --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@master"
 ```
 
 或使用支援 uv backend 的 [pipx](https://pipx.pypa.io/)：
 
 ```bash
-pipx install --backend uv --python python3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
+pipx install --backend uv --python python3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@master"
 ```
 
 確認指令可用：
@@ -75,14 +75,14 @@ webtoon-downloader "WEBTOON_URL" --separate --out "./downloads" --result-file ".
 webtoon-downloader "WEBTOON_URL" --separate --out "./downloads" --retry-failed "./download-result.json"
 ```
 
-`--separate` 僅用於圖片輸出。未指定時，CLI 將圖片放在同一輸出資料夾。
+圖片預設每章一個 `number-title` 資料夾；`--no-separate` 可改為平面輸出。未指定額外輸出時，成功結束只留下章節資料夾與圖檔，工作區會清除；失敗或中斷則保留續傳資料。`--result-file`、`--export-metadata` 或 `--keep-workspace` 才會明確保留相應資料。
 
 ## 完整性與限制
 
 - 預設 `full` 校驗；`quick` 適合可信的既有完成記錄，無法保證辨識同大小、同時間戳記的損壞。
 - 完整性依本次可存取的來源章節與圖片清單判定，不涵蓋未公開、已移除、Daily Pass 或 app-only 內容。
 - 網路、來源 API 或儲存空間問題仍可能使下載失敗；工具會保留可恢復狀態並以非零 exit code 回報。
-- `.webtoon-downloader/` 保存暫存、狀態與備份，不會自動清理。封裝發布需要輸出檔案系統支援 hard link，並需要可靠的 advisory lock。
+- `.webtoon-downloader/` 保存暫存、狀態與備份；成功後預設清理，失敗或中斷保留。無法安全清理的內容不會被刪除，並回報非零碼。封裝發布需要輸出檔案系統支援 hard link，並需要可靠的 advisory lock。
 
 詳細行為見[可靠下載與恢復](docs/download-reliability.md)及[常見問題](docs/faq.md)。
 
