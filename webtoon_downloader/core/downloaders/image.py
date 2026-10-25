@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-import httpx
-
-from webtoon_downloader.core.exceptions import ImageDownloadError, RateLimitedError
+from webtoon_downloader.core.exceptions import ImageDownloadError
 from webtoon_downloader.core.webtoon.client import WebtoonHttpClient
 from webtoon_downloader.storage import AioWriter
 from webtoon_downloader.transformers.base import AioImageTransformer
@@ -47,11 +45,13 @@ class HttpImageDownloader:
         concurrent_downloads_limit: int,
         transformers: list[AioImageTransformer] | None = None,
         progress_callback: ImageProgressCallback | None = None,
+        retries: int = 3,
     ):
         self.client = client
         self.concurrent_downloads_limit = concurrent_downloads_limit
         self.transformers = transformers if transformers is not None else []
         self.progress_callback = progress_callback
+        self.retries = retries
         self._semaphore = asyncio.Semaphore(self.concurrent_downloads_limit)
 
     async def run(self, url: str, target: str, storage: AioWriter, quality: int | None = 100) -> ImageDownloadResult:
@@ -72,7 +72,9 @@ class HttpImageDownloader:
         """
         try:
             async with self._semaphore:
-                return await self._download_image(url, target, storage, quality)
+                return await self.client.retries.run(
+                    lambda: self._download_image(url, target, storage, quality), self.retries
+                )
         except Exception as exc:
             raise ImageDownloadError(url=url, cause=exc) from exc
 
@@ -86,16 +88,10 @@ class HttpImageDownloader:
 
         """
         async with self.client.stream_image(url, quality) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                if response.status_code == 429:
-                    raise ImageDownloadError(
-                        url=url, cause=RateLimitedError(f"Rate limited while downloading image from {url}")
-                    ) from exc
+            response.raise_for_status()
 
             size = 0
-            response_stream = response.aiter_bytes()
+            response_stream: AsyncIterator[bytes] = self.client.image_chunks(response)
             for transformer in self.transformers:
                 response_stream, target = await transformer.transform(response_stream, target)
 

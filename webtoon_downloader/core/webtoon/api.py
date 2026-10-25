@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass
-from typing import Final, Literal, TypeAlias
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Final, Literal, TypeAlias
 
 import dacite
 from furl import furl
@@ -8,6 +10,9 @@ from furl import furl
 from webtoon_downloader.core.webtoon.client import WebtoonHttpClient, WebtoonMobileURL
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from webtoon_downloader.core.webtoon.inventory import EpisodePageEvidence
 
 DEFAULT_EPISODE_PAGE_SIZE: Final = 30
 """Webtoon's default episode API page size."""
@@ -49,6 +54,7 @@ def build_episodes_url(
     *,
     page_size: int,
     reading_language_code: WebtoonLanguageCode | None = None,
+    cursor: int | None = None,
 ) -> str:
     """Build a Webtoon mobile episode-list API URL."""
     url = furl(series_api_url)
@@ -61,6 +67,8 @@ def build_episodes_url(
     url.args["pageSize"] = page_size
     if reading_language_code:
         url.args["readingLanguageCode"] = reading_language_code
+    if cursor is not None:
+        url.args["cursor"] = cursor
 
     return str(url.url)
 
@@ -97,6 +105,7 @@ class WebtoonAPI:
     """Small client for Webtoon's mobile API endpoints."""
 
     client: WebtoonHttpClient
+    page_evidence: tuple[EpisodePageEvidence, ...] = field(default=(), init=False)
 
     async def get_episodes_data(
         self,
@@ -105,15 +114,40 @@ class WebtoonAPI:
         reading_language_code: WebtoonLanguageCode | None = None,
     ) -> list[EpisodeInfo]:
         """Return episode data for a given series ID."""
-        # Canvas series return an HTTP 500 error when readingLanguageCode is not provided.
-        url = build_episodes_url(
-            series_api_url,
-            page_size=page_size,
-            reading_language_code=reading_language_code,
+        from webtoon_downloader.core.webtoon.inventory import (
+            EpisodePageEvidence,
+            InventoryContractError,
+            InventoryProblem,
         )
-        response = await self.client.get(url)
-        response.raise_for_status()
-        resp = dacite.from_dict(data_class=GetEpisodesResponse, data=response.json())
-        data = resp.result.episodeList
-        log.debug("Received %d episodes", len(data))
-        return data
+
+        cursor = None
+        seen: set[int | None] = set()
+        ids: set[int] = set()
+        data: list[EpisodeInfo] = []
+        evidence = []
+        while cursor not in seen:
+            if len(seen) >= 10000:
+                raise InventoryContractError(InventoryProblem.NONTERMINAL_SOURCE)
+            seen.add(cursor)
+            url = build_episodes_url(
+                series_api_url, page_size=page_size, reading_language_code=reading_language_code, cursor=cursor
+            )
+            response = await self.client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+            page = EpisodePageEvidence.from_payload(payload, requested_cursor=cursor)
+            if page.next_cursor is None:
+                raise InventoryContractError(InventoryProblem.MISSING_CURSOR)
+            if not page.episode_ids and page.next_cursor != 0:
+                raise InventoryContractError(InventoryProblem.EMPTY_NONTERMINAL_PAGE)
+            if len(set(page.episode_ids)) != len(page.episode_ids) or ids.intersection(page.episode_ids):
+                raise InventoryContractError(InventoryProblem.DUPLICATE_IDENTITIES)
+            parsed = dacite.from_dict(data_class=GetEpisodesResponse, data=payload)
+            data.extend(parsed.result.episodeList)
+            evidence.append(page)
+            ids.update(page.episode_ids)
+            if page.next_cursor == 0:
+                self.page_evidence = tuple(evidence)
+                return data
+            cursor = page.next_cursor
+        raise InventoryContractError(InventoryProblem.BROKEN_CURSOR_CHAIN)

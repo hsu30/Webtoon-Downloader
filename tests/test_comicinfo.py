@@ -130,7 +130,9 @@ async def test_canvas_chapters_use_reading_language() -> None:
     </body></html>
     """
     episodes_json = {
+        "success": True,
         "result": {
+            "nextCursor": 0,
             "episodeList": [
                 {
                     "episodeNo": 1,
@@ -141,7 +143,7 @@ async def test_canvas_chapters_use_reading_language() -> None:
                     "displayUp": True,
                 }
             ],
-        }
+        },
     }
 
     fetcher = WebtoonFetcher(
@@ -176,7 +178,9 @@ async def test_canvas_latest_uses_single_episode_list_request() -> None:
     </body></html>
     """
     episodes_json = {
+        "success": True,
         "result": {
+            "nextCursor": 0,
             "episodeList": [
                 {
                     "episodeNo": 1,
@@ -195,7 +199,7 @@ async def test_canvas_latest_uses_single_episode_list_request() -> None:
                     "displayUp": True,
                 },
             ],
-        }
+        },
     }
     fetcher = WebtoonFetcher(
         client=DummyClient({
@@ -369,7 +373,9 @@ async def test_webtoon_downloader_cbz_includes_series_metadata(tmp_path: Path) -
     """
 
     episodes_json = {
+        "success": True,
         "result": {
+            "nextCursor": 0,
             "episodeList": [
                 {
                     "episodeNo": 1,
@@ -380,8 +386,8 @@ async def test_webtoon_downloader_cbz_includes_series_metadata(tmp_path: Path) -
                     "displayUp": True,
                     "hasBgm": False,
                 }
-            ]
-        }
+            ],
+        },
     }
 
     responses = {

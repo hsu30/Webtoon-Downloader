@@ -25,6 +25,10 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Packages built at the repository root (keep test fixtures trackable)
+/*.whl
+/*.tar.gz
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -78,3 +82,15 @@ dmypy.json
 
 # Log files
 *.log
+
+# Local scheduling, subscriptions, diagnostics and verification artifacts
+/daily_runner.py
+/subscriptions.json
+/error_log.md
+/test_folder/
+
+# Local reference material retained outside the distributed source tree
+/docs/download-reliability-plan.md
+/docs/download-reliability-baseline.md
+/docs/download-reliability-acceptance.md
+/tests/fixtures/

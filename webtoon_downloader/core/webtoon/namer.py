@@ -32,7 +32,7 @@ class InvalidChapterNamingModeError(ValueError):
 def sanitize_filename(filename: str) -> str:
     """Return a safe filename while preserving readable spaces and parentheses."""
     # A forward slash creates nested paths on every supported platform.
-    filename = filename.replace("/", "_").replace("\x00", "_")
+    filename = filename.replace("/", "_").replace("\\", "_").replace("\x00", "_")
 
     if os.name == "nt":
         filename = _WINDOWS_INVALID_FILENAME_CHARS.sub("_", filename).rstrip(" .")

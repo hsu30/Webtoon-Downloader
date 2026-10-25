@@ -191,7 +191,7 @@ class ChapterProgressManager:
         task = self._task_ids[chapter_info.number]
         rendered_total, rendered_completed = self._rendered_page_counter(total, 0)
         self.progress.update(
-            task.task, total=total, rendered_total=rendered_total, rendered_completed=rendered_completed
+            task.task, total=total, completed=0, rendered_total=rendered_total, rendered_completed=rendered_completed
         )
 
     def _rendered_page_counter(self, total: int, completed: int) -> tuple[str, str]:

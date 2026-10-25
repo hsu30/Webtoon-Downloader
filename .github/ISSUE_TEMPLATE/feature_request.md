@@ -1,19 +1,19 @@
 ---
-name: Feature request
-about: Suggest a new feature
-title: "Feature Request Summary"
+name: 功能構想
+about: 說明具體使用需求或可自行實作的改進方向
+title: ""
 labels: "enhancement"
-assignees: "zehina"
+assignees: ""
 ---
 
-**Is your feature request related to a problem? Please describe.**
+## 使用情境
 
-<!-- A clear and concise description of what the problem is. Ex. I'm always frustrated when ... -->
+目前遇到的限制與希望達成的行為：
 
-**Describe the solution you would like**
+## 建議方案
 
-<!-- A clear and concise description of what you want to happen. -->
+參數、輸出或流程會如何改變？
 
-**Additional context**
+## 相容性
 
-<!-- Add any other context or screenshots about the feature request here. -->
+對既有下載資料、狀態檔及腳本的影響：

@@ -1,136 +1,61 @@
-# Architecture
+# 架構
 
-This page describes how the downloader is structured internally and how a request flows through the project.
+## 公開下載流程
 
-## High-Level Flow
+```text
+CLI / WebtoonDownloadOptions
+  → download_webtoon_result()
+  → ReliableDownloader
+  → 來源章節清單與 cursor 核對
+  → 固定章節範圍
+  → 逐章取得 viewer 圖片清單
+  → 逐頁下載、重試、解碼、暫存
+  → 完整性與封裝驗證
+  → 發布產物、保存 manifest 與結果報告
+```
 
-The normal flow is:
+CLI 使用 `download_webtoon_result()` 取得 `BatchResult` 並設定 exit code。相容入口 `download_webtoon()` 回傳成功產物路徑；未完成時拋出 `WebtoonDownloadError`。
 
-1. The CLI parses arguments and builds `WebtoonDownloadOptions`.
-2. `download_webtoon()` wires together the client, fetcher, transformers, storage, and exporters.
-3. `WebtoonFetcher` resolves the series and chapter list.
-4. `WebtoonDownloader` orchestrates chapter tasks.
-5. `ChapterDownloader` fetches chapter viewer pages and schedules page downloads.
-6. `HttpImageDownloader` streams image bytes.
-7. Storage writers persist the result as files, ZIPs, CBZs, or PDFs.
+## 模組職責
 
-## Main Components
+| 模組 | 職責 |
+| --- | --- |
+| `cmd/cli.py`、`cmd/progress.py` | 參數、訊號處理、進度與結果呈現 |
+| `core/retry.py` | 退避、429 冷卻、完整操作預算與錯誤分類 |
+| `core/webtoon/client.py` | HTTP client、body 讀取、timeout、明確代理與大小限制 |
+| `core/webtoon/api.py`、`fetchers.py` | 系列識別、cursor 分頁與章節資料 |
+| `core/webtoon/inventory.py` | 來源完整性證據與範圍契約 |
+| `core/webtoon/extractor.py` | HTML metadata 與 viewer 圖片序列 |
+| `core/webtoon/downloaders/reliable.py` | 章節協調、續傳、校驗、發布與報告 |
+| `core/webtoon/downloaders/state.py` | 受控路徑、狀態落地、OS lock 與檔案證據 |
+| `core/webtoon/downloaders/artifacts.py` | 圖片／ZIP／CBZ／PDF 建立與格式校驗 |
+| `core/webtoon/downloaders/result.py` | 預期頁面、逐頁、章節與批次結果 |
+| `transformers/image.py` | 完整解碼及圖片轉檔 |
 
-| Area                                                     | Responsibility                                         |
-| -------------------------------------------------------- | ------------------------------------------------------ |
-| `webtoon_downloader/cmd`                                 | CLI, option validation, progress UI                    |
-| `webtoon_downloader/core/webtoon/client.py`              | HTTP client, headers, retry transport, image streaming |
-| `webtoon_downloader/core/webtoon/fetchers.py`            | Series lookup and chapter enumeration                  |
-| `webtoon_downloader/core/webtoon/downloaders/comic.py`   | Top-level orchestration for a whole series             |
-| `webtoon_downloader/core/webtoon/downloaders/chapter.py` | Per-chapter workflow and page scheduling               |
-| `webtoon_downloader/core/downloaders/image.py`           | Image streaming and transformer pipeline               |
-| `webtoon_downloader/storage`                             | Folder, ZIP, and PDF output writers                    |
-| `webtoon_downloader/transformers`                        | Image format conversion and byte-stream mutation       |
+表中 `cmd`、`core`、`transformers` 均位於 `webtoon_downloader/`。
 
-## CLI Layer
+## 身分與完整性
 
-The CLI lives in `webtoon_downloader/cmd/cli.py`.
+作品以語系、系列類型與 `title_no` 識別；章節以來源 `episode_no` 識別。資料夾名稱與呈現位置不是完成身分。
 
-It is responsible for:
+每章必須逐項符合預期圖片序列，全部圖片有效、產物校驗與發布成功後才算完成。整批則需預期章節集合與完成集合一致，且結果報告保存成功。
 
-- parsing options
-- validating combinations such as `--latest` vs `--start`/`--end`
-- setting up the event loop
-- wiring progress callbacks
-- presenting user-facing errors
+API cursor 的終點是當次來源清單證據；不連號的 episode ID 不表示缺章。來源沒有原子快照版本，不能據此證明未公開內容或之後的服務端變更。
 
-This layer should remain thin. Most business logic belongs in the core modules, not inside click handlers.
+## 重試與收尾
 
-## HTTP Layer
+重試包住完整請求與 body／解碼操作，而不是只包 HTTP transport。頁面額度在章節恢復輪次間共用，並受操作與章節時間預算限制。
 
-`WebtoonHttpClient` centralizes request behavior:
+取消後會等待相關任務及已開始的 worker 收尾，再釋放 writer 與 lock。章節互斥鎖會回報同章占用；不同章節的發布鎖則在章節預算內排隊。
 
-- connection pooling
-- request headers and user-agent selection
-- mobile vs standard Webtoons domain handling
-- retry transport selection
-- explicit request and image-stream timeouts
+## 狀態與發布
 
-The image path uses `stream_image()` because image downloads have different requirements from metadata or page fetches.
+`.webtoon-downloader/` 保存 manifest、逐頁證據、暫存產物、備份及報告。JSON 以暫存檔與 atomic replace 更新；章節先在同一檔案系統的工作區完成驗證，再發布。
 
-## Fetching Chapters
+資料夾以 rename 發布；封裝以不覆寫既有目標的 hard link 發布。平面圖片沒有多檔原子交易，整章完成需以 manifest／報告為準。受管理的損壞產物可在續傳時以備份方式修復，未管理的衝突內容保留。
 
-`WebtoonFetcher` converts the series URL to the mobile domain, extracts the `title_no`, and uses the Webtoons API to retrieve episode metadata.
+## 低階元件與擴充
 
-The fetcher constructs normalized `ChapterInfo` records used throughout the rest of the pipeline.
+`WebtoonDownloader`、`ChapterDownloader`、`HttpImageDownloader`、`AioWriter` 及 `DataExporter` 保留作為低階組合元件；單獨使用不具備公開流程的跨章節交易與報告保證。
 
-## Series Orchestration
-
-`WebtoonDownloader` is the top-level coordinator for a download run.
-
-It handles:
-
-- resolving the chapter list
-- determining the output directory
-- preparing optional export data
-- choosing the correct storage writer per chapter
-- spawning chapter tasks
-
-This is the right place to look when changing run-level behavior.
-
-## Chapter Orchestration
-
-`ChapterDownloader` handles one chapter at a time:
-
-- fetch the viewer page
-- extract image URLs and chapter notes
-- export metadata if enabled
-- schedule page downloads
-- write `ComicInfo.xml` for CBZ output when applicable
-
-It owns chapter-level concurrency through an internal semaphore.
-
-## Image Pipeline
-
-`HttpImageDownloader` is the leaf downloader:
-
-- opens the image stream
-- applies optional transformers
-- writes the byte stream to the selected storage backend
-- reports per-page progress
-
-This layer is where request failures become `ImageDownloadError`.
-
-## Storage Backends
-
-The `storage` package defines asynchronous writers for different output targets:
-
-- `AioFolderWriter`
-- `AioZipWriter`
-- `AioPdfWriter`
-
-All of them implement the same `AioWriter` protocol so the rest of the pipeline can stay storage-agnostic.
-
-## Export And Metadata
-
-Metadata export is handled separately from image storage:
-
-- text and JSON exports go through `DataExporter`
-- CBZ metadata uses ComicInfo XML helpers in `comicinfo.py`
-
-This separation keeps archive writing and metadata writing from being tightly coupled.
-
-## Error Model
-
-The project uses layered exceptions so failures stay readable:
-
-- `WebtoonDownloadError`
-- `ChapterDownloadError`
-- `ImageDownloadError`
-- specialized fetch and rate-limit errors
-
-The CLI unwraps that chain to show compact summaries while still preserving root causes.
-
-## Extension Points
-
-If you want to extend the project, the safest entry points are:
-
-- new storage writers under `storage/`
-- new image transformers under `transformers/`
-- exporter format improvements in `exporter.py`
-- fetcher/parser updates when Webtoons changes upstream behavior
+新增參數、格式或來源解析時，需同時檢查公開協調流程、狀態相容性、驗證器、CLI 與測試，不能只新增 writer 就宣稱完整性交付已支援。

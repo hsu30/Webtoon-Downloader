@@ -1,142 +1,103 @@
-<br />
-<p align="center">
-  <h2 align="center">Webtoon Downloader</h2>
-  <p align="center">
-    A fast CLI for downloading chapters from Webtoons. ⚡📚
-    <br />
-    <br />
-    <a href="https://github.com/Zehina/Webtoon-Downloader/issues">Report Bug</a>
-    ·
-    <a href="https://github.com/Zehina/Webtoon-Downloader/issues">Request Feature</a>
-    ·
-    <a href="https://zehina.github.io/Webtoon-Downloader/">View Docs</a>
-  </p>
-</p>
+# Webtoon Downloader
 
-[![Release](https://img.shields.io/github/v/release/Zehina/webtoon-downloader)](https://github.com/Zehina/Webtoon-Downloader/releases)
-[![Build status](https://img.shields.io/github/actions/workflow/status/Zehina/webtoon-downloader/main.yml?branch=master)](https://github.com/Zehina/webtoon-downloader/actions/workflows/main.yml?query=branch%3Amaster)
-[![Commit activity](https://img.shields.io/github/commit-activity/m/Zehina/webtoon-downloader)](https://img.shields.io/github/commit-activity/m/Zehina/webtoon-downloader)
-[![License](https://img.shields.io/github/license/Zehina/webtoon-downloader)](https://img.shields.io/github/license/Zehina/webtoon-downloader)
+從 Webtoons 公開網頁下載章節的命令列工具，支援圖片資料夾、ZIP、CBZ 與 PDF，並提供重試、完整性校驗及續傳。
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Zehina/Webtoon-Downloader/da001b7f9198a842610e09d3e45a31b0f5e0b9e9/docs/imgs/demo.svg">
-</p>
+[![Tag](https://img.shields.io/github/v/tag/hsu30/Webtoon-Downloader?sort=date&label=tag)](https://github.com/hsu30/Webtoon-Downloader/tags)
+[![Checks](https://img.shields.io/github/actions/workflow/status/hsu30/Webtoon-Downloader/main.yml?branch=master&label=checks)](https://github.com/hsu30/Webtoon-Downloader/actions/workflows/main.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## What It Does 🌐
+本專案由個人維護，公開供有需要的人自行使用或修改。使用說明與原始碼以此倉庫為準。
 
-Webtoon Downloader downloads public Webtoons series and saves them as:
+## 功能
 
-- image folders
-- ZIP archives
-- CBZ archives
-- PDFs
+- 下載完整系列、指定章節範圍或最新章節。
+- 輸出為圖片、ZIP、含 ComicInfo metadata 的 CBZ，或 PDF。
+- 圖片支援 JPG、PNG、WebP；分章資料夾支援標題、編號或 `number-title` 命名。
+- API、HTML 與圖片內容讀取失敗時，依次數與時間預算重試。
+- 下載內容先暫存並校驗，指定範圍全部完成後才回報成功。
+- 支援 `--resume`、失敗報告恢復、JSON 結果與明確 exit code，方便外部排程整合。
 
-It also supports metadata export, image quality selection, retry strategies, proxies, and async downloads with progress reporting.
+## 安裝
 
-Supported site:
+需要 Python **3.10 以上**與 Git。以下從本倉庫的固定 tag 安裝；PyPI 上的同名套件不代表此倉庫版本。
 
-- [https://www.webtoons.com/](https://www.webtoons.com/)
-
-## Quick Start 🚀
-
-Requires Python `3.10+`.
-
-Install with `uv`:
+使用 [uv](https://docs.astral.sh/uv/)：
 
 ```bash
-uv tool install webtoon_downloader
+uv tool install --python 3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
 ```
 
-Or with `pipx`:
+或使用支援 uv backend 的 [pipx](https://pipx.pypa.io/)：
 
 ```bash
-pipx install webtoon_downloader
+pipx install --backend uv --python python3.10 "git+https://github.com/hsu30/Webtoon-Downloader.git@v2.4.0-numbertitle.3"
 ```
 
-Download a series:
+確認指令可用：
 
 ```bash
-webtoon-downloader "https://www.webtoons.com/en/.../list?title_no=..."
+webtoon-downloader --version
+webtoon-downloader --help
 ```
 
-Useful first commands:
+工具目錄需在 `PATH`；可依安裝工具執行 `uv tool update-shell` 或 `pipx ensurepath`，再重新開啟終端。
+
+完整安裝、升級與源碼使用方式見[開始使用](docs/getting-started.md)。
+
+## 使用
+
+將範例中的 `WEBTOON_URL` 換成系列列表頁 URL，例如 `https://www.webtoons.com/zh-hant/.../list?title_no=...`。
+
+每章儲存為個別資料夾，預設使用 `number-title`：
 
 ```bash
-webtoon-downloader [url] --latest
-webtoon-downloader [url] --start 10 --end 25
-webtoon-downloader [url] --save-as cbz
-webtoon-downloader [url] --out ./downloads --separate
-webtoon-downloader [url] --export-metadata --export-format json
-webtoon-downloader [url] --proxy http://127.0.0.1:7890 --concurrent-pages 5
-webtoon-downloader [url] --debug
+webtoon-downloader "WEBTOON_URL" --separate --out "./downloads"
 ```
 
-Run `webtoon-downloader --help` for generated CLI help.
+名稱例如 `85-第83話 3枚金幣(1)`；編號會依系列總章數補零。
 
-## Documentation 📚
+下載指定範圍並允許續傳：
 
-Full docs site:
+```bash
+webtoon-downloader "WEBTOON_URL" --start 10 --end 25 --separate --resume --out "./downloads"
+```
 
-- [Documentation Home](https://zehina.github.io/Webtoon-Downloader/)
+輸出 CBZ：
 
-Useful pages:
+```bash
+webtoon-downloader "WEBTOON_URL" --save-as cbz --out "./downloads"
+```
 
-- [Getting Started](https://zehina.github.io/Webtoon-Downloader/getting-started/)
-- [CLI Guide](https://zehina.github.io/Webtoon-Downloader/cli/)
-- [FAQ](https://zehina.github.io/Webtoon-Downloader/faq/)
-- [Architecture](https://zehina.github.io/Webtoon-Downloader/architecture/)
-- [Development](https://zehina.github.io/Webtoon-Downloader/development/)
-- [API Reference](https://zehina.github.io/Webtoon-Downloader/modules/)
+保存結果報告，之後恢復未完成工作：
 
-Repository copies of those docs:
+```bash
+webtoon-downloader "WEBTOON_URL" --separate --out "./downloads" --result-file "./download-result.json"
+webtoon-downloader "WEBTOON_URL" --separate --out "./downloads" --retry-failed "./download-result.json"
+```
 
-- [docs/getting-started.md](docs/getting-started.md)
-- [docs/cli.md](docs/cli.md)
-- [docs/faq.md](docs/faq.md)
-- [docs/architecture.md](docs/architecture.md)
-- [docs/development.md](docs/development.md)
-- [docs/modules.md](docs/modules.md)
+`--separate` 僅用於圖片輸出。未指定時，CLI 將圖片放在同一輸出資料夾。
 
-## Known Limitations ⚠️
+## 完整性與限制
 
-Some failures are outside the project’s control:
+- 預設 `full` 校驗；`quick` 適合可信的既有完成記錄，無法保證辨識同大小、同時間戳記的損壞。
+- 完整性依本次可存取的來源章節與圖片清單判定，不涵蓋未公開、已移除、Daily Pass 或 app-only 內容。
+- 網路、來源 API 或儲存空間問題仍可能使下載失敗；工具會保留可恢復狀態並以非零 exit code 回報。
+- `.webtoon-downloader/` 保存暫存、狀態與備份，不會自動清理。封裝發布需要輸出檔案系統支援 hard link，並需要可靠的 advisory lock。
 
-- Webtoons rate limiting and slow CDN responses
-- Daily Pass and app-only chapter access
-- upstream site markup or API changes
+詳細行為見[可靠下載與恢復](docs/download-reliability.md)及[常見問題](docs/faq.md)。
 
-If you want details and workarounds, read the [FAQ](docs/faq.md).
+## 文件與開發
 
-## Contributing 🤝
+- [文件首頁](docs/index.md)
+- [開始使用](docs/getting-started.md)
+- [CLI 參數](docs/cli.md)
+- [可靠下載與恢復](docs/download-reliability.md)
+- [架構](docs/architecture.md)
+- [開發與測試](docs/development.md)
+- [回報與修改](CONTRIBUTING.md)
 
-Contributions are welcome.
+問題可提交至[本倉庫 Issues](https://github.com/hsu30/Webtoon-Downloader/issues)。請附版本、環境、可重現命令及已遮蔽敏感資訊的錯誤內容。
 
-Typical flow:
+## 來源與授權
 
-1. Fork the repo
-2. Create a branch
-3. Make your changes
-4. Run checks
-5. Open a pull request
-
-Contributor docs:
-
-- [Development Guide](docs/development.md)
-
-## Disclaimer ⚠️
-
-This tool is intended for personal and educational use only. You are responsible for how you use it, including compliance with the terms of service of the websites involved.
-
-## License 📄
-
-Distributed under the MIT License. See [LICENSE](LICENSE).
-
-## Contact 📬
-
-**Zehina** – [zehinadev@gmail.com](mailto:zehinadev@gmail.com)
-
-Project links:
-
-- [Repository](https://github.com/Zehina/Webtoon-Downloader)
-- [Issues](https://github.com/Zehina/Webtoon-Downloader/issues)
-- [Docs Site](https://zehina.github.io/Webtoon-Downloader/)
+本專案源自 [Ali Taibi（Zehina）的 Webtoon-Downloader](https://github.com/Zehina/Webtoon-Downloader)，目前在此倉庫獨立維護。保留原始提交歷史與著作權聲明，採用 [MIT License](LICENSE)。

@@ -3,6 +3,7 @@ import pytest
 from webtoon_downloader.core.webtoon.client import WebtoonHttpClient
 
 
+@pytest.mark.network
 @pytest.mark.asyncio
 async def test_webtoon_downloader() -> None:
     image_url = (

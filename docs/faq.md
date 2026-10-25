@@ -1,108 +1,49 @@
-# FAQ
+# 常見問題
 
-This page is based on recurring themes from the project issue tracker, including both open and closed issues.
+## 安裝後不是這個倉庫的版本？
 
-## Why Do I Get Rate Limited, Read Timeouts, Or Incomplete Downloads?
+請從本倉庫的 Git URL 與 tag／commit 安裝，而不是直接安裝 PyPI 的同名套件。以 `command -v webtoon-downloader`（Linux）或 `Get-Command webtoon-downloader`（PowerShell）確認實際指令，再檢查 `--version`。安裝與更新命令見[開始使用](getting-started.md)。
 
-This is one of the most common failure classes.
+## 指令找不到？
 
-Typical causes:
+確認使用者工具目錄在 `PATH`，必要時執行 `uv tool update-shell` 或 `pipx ensurepath` 並重新開啟終端。排程的使用者與 PATH 可能不同，應使用安裝者帳號及 executable 的完整路徑。
 
-- Webtoons rate limiting bursty traffic
-- image CDN stalls or slow responses
-- concurrency set too high for the current network or region
+## ReadTimeout、長度錯誤或 429 怎麼處理？
 
-Things to try:
+保留狀態目錄並以 `--resume` 再執行。可降低 `--concurrent-chapters`／`--concurrent-pages`，檢查連線或明確設定代理。工具會在有限預算內重試，但持續限流或網路中斷仍會失敗。
 
-- lower `--concurrent-chapters`
-- lower `--concurrent-pages`
-- keep `--retry-strategy` enabled
-- use `--proxy`
-- retry later when the upstream site is calmer
+`403/404`、磁碟滿及權限問題不應靠不斷增加重試解決。從 JSON 報告確認失敗類型，再處理存取或環境問題。
 
-This is not something the project can fully eliminate because the server decides when to throttle or stall requests.
+## 有資料夾是否代表完成？
 
-## Can This Download Daily Pass Or App-Only Chapters?
+不代表。完成判定依來源清單、manifest、實際內容驗證與發布結果；外部工具不應只檢查資料夾是否存在或編號是否最大。
 
-No, not reliably.
+## 為什麼舊資料沒有直接跳過？
 
-The downloader targets the public Webtoons website flow. If chapters are only exposed through the official app or hidden behind Daily Pass logic, they are outside the normal source this project uses.
+沒有可信 manifest 的資料，需要依當次來源逐項比對；無法可靠對應或內容不同時會保留並回報衝突。工具不會為了繼續下載而自動刪掉整章。
 
-## Why Did A Series Suddenly Stop Working Even Though It Worked Before?
+## quick 和 full 差在哪？
 
-Webtoons changes site markup, viewer structure, and localized layouts over time.
+full 會完整解碼並核對內容 hash；quick 用可信既有記錄及檔案屬性加速重用，無法保證辨識同大小、同時間戳記的損壞。新下載的資料不因 quick 模式省略完整驗證。
 
-When that happens:
+## 缺少來源清單時，為什麼不能直接 retry-failed？
 
-- HTML selectors can break
-- viewer metadata can move
-- titles or image nodes can disappear from expected locations
+來源尚未取得時，報告沒有可核對的章節範圍，請重新執行原命令。`--retry-failed` 不會猜測範圍。
 
-That class of breakage requires a code update. If you hit it, open an issue with:
+## 可以下載 Daily Pass 或 app-only 章節嗎？
 
-- the failing URL
-- the exact command you ran
-- the error output
-- `--debug` logs if available
+本專案使用公開網頁與 API，不提供解鎖、繞過存取限制或官方 app 的認證流程。來源不可存取時會回報失敗。
 
-## Why Does The Displayed Chapter Number Not Match `episode_no` In The URL?
+## 章節數字為什麼與標題或 episode_no 不同？
 
-Webtoons sometimes exposes an `episode_no` in the URL that does not match the numbering displayed in the series UI.
+下載範圍與呈現編號依來源有序清單的位置；`episode_no` 是來源識別，標題的話數是作品文字。三者不可互相替代。
 
-The downloader currently follows the chapter numbering extracted from the site itself, not arbitrary external numbering from RSS feeds or URL parameters.
+## NAS 安裝或發布失敗？
 
-## Why Does `webtoon-downloader` Say `command not found`?
+請檢查 Python、CPU 架構、glibc 與原生套件支援，以及 volume 的 hard link、advisory lock、權限和空間。支援 Python 3.10 不等於支援所有舊 NAS 系統。先用一章與新的輸出目錄測試。
 
-That is usually an installation or `PATH` problem.
+## 網站更新後失效？
 
-Check the basics:
+HTML／API 結構可能變動。可到[Issues](https://github.com/hsu30/Webtoon-Downloader/issues)提供版本、環境、公開系列 URL、可重現命令及已遮蔽的錯誤資訊。請勿直接上傳訂閱設定、完整 manifest、代理認證或其他私人資料。
 
-- install with `uv tool install webtoon_downloader` or `pipx install webtoon_downloader`
-- reopen your terminal
-- confirm the install location is on `PATH`
-- run `webtoon-downloader --version`
-
-## Why Does `pip` Say It Is Not Found?
-
-That is also a local Python environment problem, not a downloader bug.
-
-Prefer one of these flows instead of manual `pip` troubleshooting:
-
-- `uv tool install webtoon_downloader`
-- `pipx install webtoon_downloader`
-
-## Why Am I Seeing “No Images Found” Or Missing Element Errors?
-
-That usually means one of these:
-
-- Webtoons changed the page markup
-- the chapter viewer is behaving differently for that series
-- the series is unavailable in the way the downloader expects
-
-This is a real bug class, but it is usually upstream-driven rather than caused by user input.
-
-## Can The Project Prevent Every Failure Automatically?
-
-No.
-
-The project can improve retry logic, parsing, and validation, but some failures remain outside its control:
-
-- Webtoons rate limiting
-- Daily Pass and app-only gating
-- upstream HTML/API changes
-- local Python, PATH, or proxy problems
-
-## Should I Open An Issue Or Is It Just A Known Limitation?
-
-Open an issue if:
-
-- the URL is public and should work
-- the command is valid
-- the failure is reproducible
-- you can provide logs or exact output
-
-It is more likely a limitation if:
-
-- the content is Daily Pass or app-only
-- the failure is just temporary rate limiting
-- the tool is not installed correctly on your machine
+更完整的儲存、恢復與限制說明見[可靠下載與恢復](download-reliability.md)。

@@ -1,7 +1,7 @@
 .PHONY: install
 install: ## Install the uv environment and install the pre-commit hooks
 	@echo "🚀 Creating virtual environment and syncing dependencies with uv"
-	@uv sync
+	@uv sync --locked
 	@uv run pre-commit install
 	@echo "✅ Environment ready. Use 'uv run <command>' to run tools in the project environment."
 
@@ -22,23 +22,9 @@ test: ## Test the code with pytest
 	@uv run pytest --cov --cov-config=pyproject.toml --cov-report=xml
 
 .PHONY: build
-build: clean-build ## Build wheel and source distribution using uv
+build: ## Build local wheel and source distribution using uv
 	@echo "🚀 Creating wheel file"
 	@uv build
-
-.PHONY: clean-build
-clean-build: ## clean build artifacts
-	@rm -rf dist
-
-.PHONY: publish
-publish: ## publish a release to pypi.
-	@echo "🚀 Publishing: Dry run."
-	@uv publish --dry-run --token "$(PYPI_TOKEN)"
-	@echo "🚀 Publishing."
-	@uv publish --token "$(PYPI_TOKEN)"
-
-.PHONY: build-and-publish
-build-and-publish: build publish ## Build and publish.
 
 .PHONY: docs-test
 docs-test: ## Test if documentation can be built without warnings or errors

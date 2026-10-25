@@ -1,125 +1,19 @@
-# Contributing to `webtoon-downloader`
+# 回報與修改
 
-Contributions are welcome, and they are greatly appreciated!
-Every little bit helps, and credit will always be given.
+本專案由個人維護，公開供各自使用與修改。可自行 fork 配合需要調整；本倉庫的功能與限制以文件及原始碼為準。
 
-You can contribute in many ways:
+## 問題回報
 
-# Types of Contributions
+請使用[本倉庫 Issues](https://github.com/hsu30/Webtoon-Downloader/issues)，提供：
 
-## Report Bugs
+- `webtoon-downloader --version`、Python、作業系統及 CPU 架構。
+- 公開可存取的系列 URL、可重現命令與預期結果。
+- 輸出格式、驗證／續傳選項，以及結果報告中的失敗類型與 exit code。
 
-Report bugs at https://github.com/Zehina/webtoon-downloader/issues
+請先遮蔽代理認證、私人路徑、存取 token 與其他敏感資訊。不要直接上傳訂閱設定、完整內部 manifest 或下載內容。
 
-If you are reporting a bug, please include:
+## 修改與測試
 
-- Your operating system name and version.
-- Any details about your local setup that might be helpful in troubleshooting.
-- Detailed steps to reproduce the bug.
+環境建立、程式結構與驗證命令見[開發與測試](docs/development.md)。改變行為時保留可重現測試並更新相應使用文件；範圍聚焦於一個問題，避免混入不相關的格式或依賴更新。
 
-## Fix Bugs
-
-Look through the GitHub issues for bugs.
-Anything tagged with "bug" and "help wanted" is open to whoever wants to implement a fix for it.
-
-## Implement Features
-
-Look through the GitHub issues for features.
-Anything tagged with "enhancement" and "help wanted" is open to whoever wants to implement it.
-
-## Write Documentation
-
-Webtoon Downloader could always use more documentation, whether as part of the official docs or in docstrings.
-
-## Submit Feedback
-
-The best way to send feedback is to file an issue at https://github.com/Zehina/webtoon-downloader/issues.
-
-If you are proposing a new feature:
-
-- Explain in detail how it would work.
-- Keep the scope as narrow as possible, to make it easier to implement.
-- Remember that this is a volunteer-driven project, and that contributions are welcome :)
-
-# Get Started!
-
-Ready to contribute? Here's how to set up `webtoon-downloader` for local development.
-Please note this documentation assumes you already have `uv`, `git` and `make` installed and ready to go.
-
-1. Fork the `webtoon-downloader` repo on GitHub.
-
-2. Clone your fork locally:
-
-```bash
-cd <directory_in_which_repo_should_be_created>
-git clone https://github.com/Zehina/Webtoon-Downloader.git
-```
-
-3. Now we need to install the environment. Navigate into the directory
-
-```bash
-cd webtoon-downloader
-```
-
-Then, install and activate the environment with:
-
-```bash
-make install
-```
-
-4. Install pre-commit to run linters/formatters at commit time:
-
-```bash
-uv run pre-commit install
-```
-
-5. Create a branch for local development:
-
-```bash
-git checkout -b name-of-your-bugfix-or-feature
-```
-
-Now you can make your changes locally.
-
-6. Don't forget to add test cases for your added functionality to the `tests` directory if possible.
-
-7. When you're done making changes, check that your changes pass the formatting tests.
-
-```bash
-make check
-```
-
-Now, validate that all unit tests are passing:
-
-```bash
-make test
-```
-
-9. Before raising a pull request you should also run tox.
-   This will run the tests across different versions of Python:
-
-```bash
-tox
-```
-
-This requires you to have multiple versions of python installed.
-This step is also triggered in the CI/CD pipeline, so you could also choose to skip this step locally.
-
-10. Commit your changes and push your branch to GitHub:
-
-```bash
-git add .
-git commit -m "Your detailed description of your changes."
-git push origin name-of-your-bugfix-or-feature
-```
-
-11. Submit a pull request through the GitHub website.
-
-# Pull Request Guidelines
-
-Before you submit a pull request, check that it meets these guidelines:
-
-1. The pull request should include tests whenever possible.
-
-2. If the pull request adds functionality, the docs should be updated.
-   Put your new functionality into a function with a docstring, and add the feature to the list in `README.md` if needed.
+如提供 pull request，請說明觸發條件、修改後行為與實際執行的驗證。請以本倉庫為目標，保留 MIT 授權及原作者著作權聲明。

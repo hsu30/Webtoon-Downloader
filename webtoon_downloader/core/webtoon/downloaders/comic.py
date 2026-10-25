@@ -10,21 +10,18 @@ from pathlib import Path
 from furl import furl
 
 from webtoon_downloader.core import file as fileutil
-from webtoon_downloader.core.downloaders.image import HttpImageDownloader
 from webtoon_downloader.core.exceptions import NoChaptersFoundError, WebtoonDownloadError
 from webtoon_downloader.core.webtoon.client import WebtoonHttpClient
 from webtoon_downloader.core.webtoon.comicinfo import SeriesMetadata
 from webtoon_downloader.core.webtoon.downloaders.callbacks import OnWebtoonFetchCallback
 from webtoon_downloader.core.webtoon.downloaders.chapter import ChapterDownloader
 from webtoon_downloader.core.webtoon.downloaders.options import StorageType, WebtoonDownloadOptions
-from webtoon_downloader.core.webtoon.downloaders.result import DownloadResult
+from webtoon_downloader.core.webtoon.downloaders.result import BatchResult, DownloadResult
 from webtoon_downloader.core.webtoon.exporter import DataExporter
 from webtoon_downloader.core.webtoon.extractor import ElementNotFoundError, WebtoonMainPageExtractor
-from webtoon_downloader.core.webtoon.fetchers import END_CHAPTER_LATEST, EndChapter, WebtoonFetcher
+from webtoon_downloader.core.webtoon.fetchers import EndChapter, WebtoonFetcher
 from webtoon_downloader.core.webtoon.models import ChapterInfo
-from webtoon_downloader.core.webtoon.namer import NonSeparateFileNameGenerator, SeparateFileNameGenerator
 from webtoon_downloader.storage import AioFolderWriter, AioPdfWriter, AioWriter, AioZipWriter
-from webtoon_downloader.transformers.image import AioImageFormatTransformer
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +103,13 @@ class WebtoonDownloader:
             task = self._create_task(chapter_info, self.quality, series_metadata=series_metadata)
             tasks.append(task)
 
-        results = await asyncio.gather(*tasks, return_exceptions=False)
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         if self.exporter:
             await self.exporter.write_data(self._directory)
@@ -232,57 +235,33 @@ class WebtoonDownloader:
         await self.exporter.add_series_summary(extractor.series_summary, self._directory / "summary.txt")
 
 
+async def download_webtoon_result(
+    opts: WebtoonDownloadOptions,
+    *,
+    client: WebtoonHttpClient | None = None,
+) -> BatchResult:
+    """Download the selected scope and always return a persisted, structured outcome."""
+    from webtoon_downloader.core.webtoon.downloaders.reliable import ReliableDownloader
+
+    if client is not None:
+        return await ReliableDownloader(opts, client).run()
+    async with WebtoonHttpClient(
+        proxy=opts.proxy,
+        retry_strategy=opts.retry_strategy,
+        request_retries=opts.request_retries,
+        retry_delay=opts.retry_delay,
+        retry_max_delay=opts.retry_max_delay,
+        request_timeout=opts.request_timeout,
+        image_read_timeout=opts.image_read_timeout,
+        max_image_bytes=opts.max_image_bytes,
+        request_time_budget=opts.request_time_budget,
+    ) as owned_client:
+        return await ReliableDownloader(opts, owned_client).run()
+
+
 async def download_webtoon(opts: WebtoonDownloadOptions) -> list[DownloadResult]:
-    """
-    Asynchronously downloads chapters of a given Webtoon based on the provided options.
-
-    Args:
-        opts: Options for downloading the Webtoon.
-
-    Returns:
-        A list of download results for each chapter.
-    """
-    file_name_generator = (
-        SeparateFileNameGenerator(chapter_mode=opts.chapter_mode)
-        if opts.separate
-        else NonSeparateFileNameGenerator()
-    )
-    webtoon_client = WebtoonHttpClient(proxy=opts.proxy, retry_strategy=opts.retry_strategy)
-    image_downloader = HttpImageDownloader(
-        client=webtoon_client,
-        transformers=[AioImageFormatTransformer(opts.image_format)],
-        concurrent_downloads_limit=opts.concurrent_pages,
-    )
-
-    exporter = DataExporter(opts.exporter_format) if opts.export_metadata else None
-    chapter_downloader = ChapterDownloader(
-        client=webtoon_client,
-        exporter=exporter,
-        progress_callback=opts.chapter_progress_callback,
-        image_downloader=image_downloader,
-        file_name_generator=file_name_generator,
-        concurrent_downloads_limit=opts.concurrent_chapters,
-    )
-
-    end: EndChapter
-    if opts.latest:
-        start, end = None, END_CHAPTER_LATEST
-    else:
-        start, end = opts.start, opts.end
-
-    downloader = WebtoonDownloader(
-        url=opts.url,
-        client=webtoon_client,
-        directory=opts.destination,
-        start_chapter=start,
-        end_chapter=end,
-        chapter_downloader=chapter_downloader,
-        storage_type=opts.save_as,
-        exporter=exporter,
-        on_webtoon_fetched=opts.on_webtoon_fetched,
-        quality=opts.quality,
-    )
-    try:
-        return await downloader.run()
-    except Exception as exc:
-        raise WebtoonDownloadError(downloader.url, exc) from exc
+    """Compatibility entrypoint: return artifact paths or raise on incomplete delivery."""
+    result = await download_webtoon_result(opts)
+    if not result.is_complete:
+        raise WebtoonDownloadError(opts.url, message=f"Download {result.status}; report: {result.report_path}")
+    return [chapter.artifact for chapter in result.chapters if chapter.artifact is not None]

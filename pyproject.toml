@@ -1,8 +1,9 @@
 [project]
 name = "webtoon_downloader"
-version = "2.4.0+numbertitle.2"
-description = "A fast scrapper ⚡ for downloading comics from the Webtoons platform."
+version = "2.4.0+numbertitle.3"
+description = "Download and verify public Webtoon chapters as images, ZIP, CBZ, or PDF."
 authors = [{ name = "Ali Taibi", email = "zehinadev@gmail.com" }]
+maintainers = [{ name = "hsu30" }]
 requires-python = ">=3.10,<4.0"
 readme = "README.md"
 classifiers = [
@@ -21,15 +22,15 @@ dependencies = [
     "furl>=2.1.3,<3",
     "httpx[http2]>=0.28.1,<0.29",
     "aiofiles>=25.1.0,<26",
-    "pymupdf>=1.27.1,<2",
+    "PyMuPDF>=1.27.1,<2",
     "rich-click>=1.7.2,<2",
     "dacite>=1.9.2,<2",
-    "httpx-retries>=0.4.0,<0.5",
 ]
 
 [project.urls]
-Repository = "https://github.com/Zehina/webtoon-downloader"
-Documentation = "https://zehina.github.io/Webtoon-Downloader/"
+Repository = "https://github.com/hsu30/Webtoon-Downloader"
+Documentation = "https://github.com/hsu30/Webtoon-Downloader/tree/master/docs"
+Issues = "https://github.com/hsu30/Webtoon-Downloader/issues"
 
 [project.scripts]
 webtoon-downloader = "webtoon_downloader.cmd.cli:run"
@@ -161,9 +162,9 @@ branch = true
 source = ["webtoon_downloader"]
 
 [tool.project.urls]
-Homepage = 'https://github.com/Zehina/Webtoon-Downloader'
-Issues = 'https://github.com/Zehina/Webtoon-Downloader/issues'
-Repository = 'https://github.com/Zehina/Webtoon-Downloader.git'
+Homepage = 'https://github.com/hsu30/Webtoon-Downloader'
+Issues = 'https://github.com/hsu30/Webtoon-Downloader/issues'
+Repository = 'https://github.com/hsu30/Webtoon-Downloader.git'
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import io
 import os
-import tempfile
 import zipfile
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -16,6 +17,11 @@ from webtoon_downloader.storage import (
     AioZipWriter,
 )
 from webtoon_downloader.storage.exceptions import StreamWriteError
+
+
+@dataclass
+class RetainedFileBufferedZipWriter(AioFileBufferedZipWriter):
+    retain_temporary_files: bool = True
 
 
 async def async_iter_image(image: Image.Image, chunk_size: int = 1024) -> AsyncIterator[bytes]:
@@ -54,7 +60,7 @@ async def _test_zipwriter(file: str | os.PathLike | io.BytesIO, zip_writer: type
 
 
 @pytest.mark.asyncio
-async def test_pdf_writer() -> None:
+async def test_pdf_writer(tmp_path: Path) -> None:
     # Create test images
     test_images = [
         Image.new("RGB", (100, 100), color="red"),
@@ -62,18 +68,18 @@ async def test_pdf_writer() -> None:
         Image.new("RGB", (300, 300), color="blue"),
     ]
 
-    with tempfile.NamedTemporaryFile(prefix="test_pdf", suffix=".pdf") as f:
-        async with AioPdfWriter(f) as writer:
-            for idx, img in enumerate(test_images):
-                await writer.write(async_iter_image(img), f"image_{idx}.jpg")
+    f = tmp_path / "chapter.pdf"
+    async with AioPdfWriter(f) as writer:
+        for idx, img in enumerate(test_images):
+            await writer.write(async_iter_image(img), f"image_{idx}.jpg")
 
-        with pymupdf.open(f) as doc:
-            assert len(doc) == len(test_images)  # Check number of pages
+    with pymupdf.open(f) as doc:
+        assert len(doc) == len(test_images)  # Check number of pages
 
-            for page_num, img in enumerate(test_images):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap()  # pyright: ignore[reportAttributeAccessIssue]
-                assert pix.width == img.width and pix.height == img.height
+        for page_num, img in enumerate(test_images):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap()  # pyright: ignore[reportAttributeAccessIssue]
+            assert pix.width == img.width and pix.height == img.height
 
 
 @pytest.mark.asyncio
@@ -81,7 +87,7 @@ async def test_pdf_writer() -> None:
     "zip_writer",
     [
         AioZipWriter,
-        AioFileBufferedZipWriter,
+        RetainedFileBufferedZipWriter,
     ],
 )
 async def test_zipwriter_buffer(zip_writer: type[AioZipWriter]) -> None:
@@ -93,22 +99,21 @@ async def test_zipwriter_buffer(zip_writer: type[AioZipWriter]) -> None:
     "zip_writer",
     [
         AioZipWriter,
-        AioFileBufferedZipWriter,
+        RetainedFileBufferedZipWriter,
     ],
 )
-async def test_zipwriter_file(zip_writer: type[AioZipWriter]) -> None:
-    with tempfile.NamedTemporaryFile(prefix="test_storage", suffix=".zip") as f:
-        await _test_zipwriter(f.name, zip_writer)
+async def test_zipwriter_file(zip_writer: type[AioZipWriter], tmp_path: Path) -> None:
+    await _test_zipwriter(tmp_path / "chapter.zip", zip_writer)
 
 
 @pytest.mark.asyncio
-async def test_write_raises_stream_write_error() -> None:
+async def test_write_raises_stream_write_error(tmp_path: Path) -> None:
     async with AioZipWriter(io.BytesIO()) as writer:
         with pytest.raises(StreamWriteError):
             # Passing an invalid file name
             await writer.write(async_iter(b"some data"), 12)
 
-    with pytest.raises(StreamWriteError), tempfile.TemporaryDirectory() as dir_path:
+    with pytest.raises(StreamWriteError):
         # Opening a directory should cause an error
-        async with AioZipWriter(dir_path) as writer:
+        async with AioZipWriter(tmp_path) as writer:
             await writer.write(async_iter(b"some data"), "test.txt")

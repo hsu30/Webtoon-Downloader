@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -9,6 +8,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from PIL import Image
+
+from webtoon_downloader.core.retry import ImageContentError, ResourceLimitError, blocking
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class AioImageFormatTransformer:
     """
 
     target_format: ImageFormat
+    max_pixels: int = 100_000_000
 
     _target_format: _ValidImageFormats = field(init=False)
 
@@ -105,9 +107,19 @@ class AioImageFormatTransformer:
 
         try:
             with Image.open(image_stream) as image:
+                self._check_dimensions(image)
+                image.load()
                 return image.format != self._target_format
-        except OSError:
-            return True  # Proceed with transformation if format detection fails
+        except ResourceLimitError:
+            raise
+        except Image.DecompressionBombError as exc:
+            raise ResourceLimitError("image_pixel_limit") from exc
+        except (OSError, ValueError) as exc:
+            raise ImageContentError(str(exc)) from exc
+
+    def _check_dimensions(self, image: Image.Image) -> None:
+        if image.width * image.height > self.max_pixels:
+            raise ResourceLimitError("image_pixel_limit")
 
     def _sync_transform(self, image_stream: BytesIO) -> BytesIO:
         """
@@ -158,8 +170,7 @@ class AioImageFormatTransformer:
 
     async def _run_in_executor(self, func: Callable, *args: Any) -> Any:
         """Executes a function in anexecutor"""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, func, *args)
+        return await blocking(func, *args)
 
     def _target_format_suffix(self) -> str:
         """Returns the file suffix representation for the target format"""

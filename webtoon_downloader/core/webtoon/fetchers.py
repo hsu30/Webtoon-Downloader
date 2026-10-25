@@ -24,6 +24,12 @@ from webtoon_downloader.core.webtoon.api import (
     build_series_api_url,
 )
 from webtoon_downloader.core.webtoon.client import WebtoonHttpClient, WebtoonURL
+from webtoon_downloader.core.webtoon.inventory import (
+    EpisodeInventory,
+    InventoryContractError,
+    InventoryProblem,
+    SeriesIdentity,
+)
 from webtoon_downloader.core.webtoon.models import ChapterInfo
 
 log = logging.getLogger(__name__)
@@ -147,6 +153,12 @@ class WebtoonFetcher:
             If end_chapter is set to latest and start_chapter is None then returns the last chapter
             If both `start_chapter` and `end_chapter` are None, returns all chapters.
         """
+        inventory = await self.get_inventory(series_url)
+        scope = inventory.select(start_chapter, end_chapter)
+        selected = set(scope.episode_ids)
+        return [chapter for chapter in inventory.chapters if chapter.data_episode_no in selected]
+
+    async def get_inventory(self, series_url: str) -> EpisodeInventory:
         mobile_url = self._convert_url_domain(series_url, WebtoonDomain.MOBILE)
         webtoon_api = WebtoonAPI(self.client)
         response = await self.client.get(mobile_url)
@@ -155,6 +167,8 @@ class WebtoonFetcher:
 
         soup = BeautifulSoup(response.text, "html.parser")
         title_id = self._get_title_no(soup)
+        if furl(series_url).args.get("title_no") != str(title_id):
+            raise InventoryContractError(InventoryProblem.INVALID_SERIES_IDENTITY)
         log.debug("Title ID: %s", title_id)
         series_title = self._get_series_title(soup)
 
@@ -176,7 +190,22 @@ class WebtoonFetcher:
             )
             chapter_details.append(chapter_info)
 
-        if end_chapter == END_CHAPTER_LATEST:
-            return [chapter_details[-1]]
-
-        return chapter_details[int(start_chapter or 1) - 1 : end_chapter]
+        language = self._get_reading_language_code(series_url)
+        if language is None:
+            raise InventoryContractError(InventoryProblem.INVALID_SERIES_IDENTITY)
+        for chapter in chapter_details:
+            viewer = furl(chapter.viewer_url)
+            if (
+                viewer.host != "www.webtoons.com"
+                or viewer.args.get("title_no") != str(title_id)
+                or viewer.args.get("episode_no") != str(chapter.data_episode_no)
+            ):
+                raise InventoryContractError(InventoryProblem.PARSED_LIST_MISMATCH)
+        inventory = EpisodeInventory(
+            SeriesIdentity(language, self._get_webtoon_type(series_url), title_id),
+            tuple(chapter_details),
+            webtoon_api.page_evidence,
+        )
+        if inventory.incomplete_reason is not None:
+            raise InventoryContractError(inventory.incomplete_reason)
+        return inventory

@@ -1,12 +1,13 @@
 ---
-name: General question
-about: Ask a question about anything related to this project
-title: "Question"
+name: 使用提問
+about: 安裝、參數或原始碼相關問題
+title: ""
 labels: "question"
-assignees: "zehina"
+assignees: ""
 ---
 
-**Question**
+## 問題
 
-<!-- Please ask your question here. It can be about the usage of this project, the internals, the implementation or whatever interests you.
-Please use the BUG template for bugs and the FEATURE REQUEST template for feature requests. -->
+## 已確認資訊
+
+版本、執行環境、已查閱的文件與必要的命令／輸出。請先遮蔽認證及私人資訊。

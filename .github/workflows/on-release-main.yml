@@ -1,11 +1,16 @@
-name: release-main
+name: Validate source version
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -14,14 +19,20 @@ jobs:
       - name: Set up the environment
         uses: ./.github/actions/setup-uv-env
 
-      - name: Export tag
-        id: vars
-        run: echo tag=${GITHUB_REF_NAME#v} >> $GITHUB_OUTPUT
-
-      - name: Build and publish
+      - name: Check package version
         run: |
-          uv version $RELEASE_VERSION --frozen
-          make build-and-publish
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-          RELEASE_VERSION: ${{ steps.vars.outputs.tag }}
+          uv run --locked python - <<'PY'
+          import importlib.metadata
+          import os
+          from packaging.version import Version
+
+          actual = importlib.metadata.version("webtoon_downloader")
+          if os.environ.get("GITHUB_REF_TYPE") == "tag":
+              expected = os.environ["GITHUB_REF_NAME"].removeprefix("v").replace("-numbertitle.", "+numbertitle.", 1)
+              if Version(actual) != Version(expected):
+                  raise SystemExit(f"Tag version {expected} does not match package version {actual}")
+          print(f"Package version: {actual}")
+          PY
+
+      - name: Build source and wheel locally
+        run: uv build

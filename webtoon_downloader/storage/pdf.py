@@ -111,6 +111,9 @@ class AioPdfWriter:
         """
         Completes the PDF creation process by adding pages sorted by item name.
         """
+        if exc_type is not None:
+            self._doc.close()
+            return
         # Sort the stored page data by item name
         self._pages_data.sort(key=lambda x: x[0])
         # Add each image to the PDF

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import signal
 import sys
+from collections.abc import Callable
 from typing import Any, Literal
 
 import rich_click as click
@@ -18,7 +18,7 @@ from webtoon_downloader.cmd.exceptions import (
     CLISeparateOptionWithNonImageSaveAsError,
 )
 from webtoon_downloader.cmd.progress import ChapterProgressManager, init_progress
-from webtoon_downloader.core.exceptions import DownloadError, WebtoonDownloadError
+from webtoon_downloader.core.exceptions import DownloadError
 from webtoon_downloader.core.webtoon.client import RetryStrategy
 from webtoon_downloader.core.webtoon.downloaders import comic
 from webtoon_downloader.core.webtoon.downloaders.options import (
@@ -78,18 +78,89 @@ def _unwrap_error_chain(exc: Exception) -> list[str]:
     return chain
 
 
+def reliability_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    for name, default in (("request-retries", 3), ("page-retries", 3), ("chapter-retries", 1)):
+        command = click.option(
+            f"--{name}",
+            type=click.IntRange(min=0),
+            default=default,
+            show_default=True,
+            help=f"Extra {name.removesuffix('-retries')} attempts after the initial attempt.",
+        )(command)
+    for name, float_default in (("retry-delay", 1.0), ("retry-max-delay", 30.0)):
+        command = click.option(
+            f"--{name}",
+            type=click.FloatRange(min=0),
+            default=float_default,
+            show_default=True,
+            help="Retry backoff duration in seconds; server Retry-After is respected.",
+        )(command)
+    for name, float_default in (
+        ("request-timeout", 30.0),
+        ("request-time-budget", 300.0),
+        ("image-read-timeout", 90.0),
+        ("chapter-time-budget", 900.0),
+    ):
+        command = click.option(
+            f"--{name}",
+            type=click.FloatRange(min=0, min_open=True),
+            default=float_default,
+            show_default=True,
+            help=f"{name.replace('-', ' ').capitalize()} in seconds.",
+        )(command)
+    for name in ("resume", "fail-fast"):
+        command = click.option(
+            f"--{name}",
+            is_flag=True,
+            help="Reuse validated staged pages and repair managed output with backups."
+            if name == "resume"
+            else "Cancel remaining work after the first failed chapter.",
+        )(command)
+    command = click.option(
+        "--verify",
+        type=click.Choice(["full", "quick"]),
+        default="full",
+        show_default=True,
+        help="Full decodes and hashes; quick trusts unchanged recorded size and timestamps.",
+    )(command)
+    command = click.option(
+        "--result-file", type=click.Path(dir_okay=False, resolve_path=True), help="JSON result report path."
+    )(command)
+    command = click.option(
+        "--retry-failed",
+        type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+        help="Recover a failed JSON report, rechecking its original chapter scope.",
+    )(command)
+    command = click.option(
+        "--max-image-bytes",
+        type=click.IntRange(min=1),
+        default=64 * 1024 * 1024,
+        help="Maximum received bytes per image.",
+    )(command)
+    command = click.option(
+        "--max-image-pixels", type=click.IntRange(min=1), default=100_000_000, help="Maximum decoded pixels per image."
+    )(command)
+    return click.option(
+        "--minimum-free-bytes",
+        type=click.IntRange(min=0),
+        default=64 * 1024 * 1024,
+        help="Minimum free workspace bytes before fetching a page.",
+    )(command)
+
+
 @click.command()
 @click.version_option(package_name="webtoon_downloader")
 @click.pass_context
 @click.rich_config(help_config=help_config)
 @click.argument("url", required=True, type=str)
+@reliability_options
 @click.option(
     "--start",
     "-s",
-    type=int,
+    type=click.IntRange(min=1),
     help="Start chapter",
 )
-@click.option("--end", "-e", type=int, help="End chapter")
+@click.option("--end", "-e", type=click.IntRange(min=1), help="End chapter")
 @click.option(
     "--latest",
     "-l",
@@ -216,6 +287,7 @@ def cli(  # noqa: C901
     retry_strategy: RetryStrategy | Literal["none"] | None,
     quality: int,
     debug: bool,
+    **reliability: Any,
 ) -> None:
     log, console = webtoon_downloader.logger.setup(
         log_filename="webtoon_downloader.log" if debug else None,
@@ -246,79 +318,79 @@ def cli(  # noqa: C901
     )
 
     progress_manager = ChapterProgressManager(progress, series_download_task)
-    opts = WebtoonDownloadOptions(
-        url=url,
-        start=start,
-        end=end,
-        latest=latest,
-        destination=out,
-        export_metadata=export_metadata,
-        exporter_format=export_format,
-        separate=separate,
-        chapter_mode=chapter_naming,
-        image_format=image_format,
-        save_as=save_as,
-        chapter_progress_callback=progress_manager.advance_progress,
-        on_webtoon_fetched=progress_manager.on_webtoon_fetched,
-        concurrent_chapters=concurrent_chapters,
-        concurrent_pages=concurrent_pages,
-        retry_strategy=retry_strategy if retry_strategy != "none" else None,
-        quality=quality,
-        proxy=proxy,
-    )
+    try:
+        opts = WebtoonDownloadOptions(
+            url=url,
+            start=start,
+            end=end,
+            latest=latest,
+            destination=out,
+            export_metadata=export_metadata,
+            exporter_format=export_format,
+            separate=separate,
+            chapter_mode=chapter_naming,
+            image_format=image_format,
+            save_as=save_as,
+            chapter_progress_callback=progress_manager.advance_progress,
+            on_webtoon_fetched=progress_manager.on_webtoon_fetched,
+            concurrent_chapters=concurrent_chapters,
+            concurrent_pages=concurrent_pages,
+            retry_strategy=retry_strategy if retry_strategy != "none" else None,
+            quality=quality,
+            proxy=proxy,
+            **reliability,
+        )
+    except ValueError as error:
+        raise click.BadParameter(str(error)) from error
 
-    # Python 3.14 no longer creates an implicit event loop for the main thread.
-    # Create and register one explicitly so CLI behavior is consistent across versions.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    task = loop.create_task(comic.download_webtoon_result(opts))
+    interrupted = 0
 
-    async def _shutdown() -> None:
-        """Cancel remaining tasks and stop the loop *quietly*."""
-        if progress:
-            progress.console.print("[bold red]Stopping Download...[/]")
-            progress.console.print("[red]Download Stopped![/]")
+    def stop(signum: int, _frame: Any) -> None:
+        nonlocal interrupted
+        if interrupted == 0:
+            interrupted = 130 if signum == signal.SIGINT else 143
+            opts.interruption_code = 130 if signum == signal.SIGINT else 143
+            task.cancel()
 
-        # ➊ cancel every other task that isn't the main task
-        current = asyncio.current_task()
-        tasks = {t for t in asyncio.all_tasks(loop) if t is not current}
-        for t in tasks:
-            t.cancel()
-
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-        loop.stop()
-        raise GracefulExit
-
-    def _raise_graceful_exit(*_: Any) -> None:
-        exit_tasks = set()
-        shutdown_task = loop.create_task(_shutdown())
-        exit_tasks.add(shutdown_task)
-        shutdown_task.add_done_callback(exit_tasks.discard)
-
-    with progress:
-        signal.signal(signal.SIGINT, _raise_graceful_exit)
-        signal.signal(signal.SIGTERM, _raise_graceful_exit)
-        progress.print("Press [bold]Ctrl+C[/] to stop the download early...")
-        with contextlib.suppress(GracefulExit, asyncio.CancelledError):
-            try:
-                main_task = loop.create_task(comic.download_webtoon(opts))
-                loop.run_until_complete(main_task)
-                progress.print("Download complete!")
-            except WebtoonDownloadError as exc:
-                console.print(f"[red][bold]Download error:[/bold] {exc}[/]")
-                error_chain = " -> ".join(_unwrap_error_chain(exc))
-                console.print(f"[red]Failure type: {error_chain}[/]")
-                if webtoon_downloader.cmd.exceptions.is_root_cause_rate_limit_error(exc.cause):
-                    console.print(
-                        "[red][bold]Oh no! We got rate limited 😔 ! Please consider using a proxy or use lower --concurrent-pages/-concurrent-chapters values[/bold][/]"
-                    )
-
-                log.exception("Download error")
-            finally:
-                log.info("Shutting down logger")
-                webtoon_downloader.logger.shutdown()
-                asyncio.set_event_loop(None)
-                loop.close()
+    previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+    for number in previous:
+        signal.signal(number, stop)
+    code = 1
+    try:
+        with progress:
+            result = loop.run_until_complete(task)
+            code = interrupted or result.exit_code
+            console.print(f"Download {result.status}; verification={result.verification}")
+            if result.report_path:
+                console.print(f"Result report: {result.report_path}")
+            if result.incomplete_episode_ids:
+                console.print(f"Incomplete episode IDs: {list(result.incomplete_episode_ids)}")
+            if result.error:
+                console.print(f"[red]{result.error}[/]")
+            for chapter in result.chapters:
+                if chapter.error:
+                    console.print(f"[red]Episode {chapter.episode_no}: {chapter.error}[/]")
+    except asyncio.CancelledError:
+        code = interrupted or 130
+    except Exception as error:
+        console.print(f"[red]Download failed: {type(error).__name__}[/]")
+        log.exception("Download failed")
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+        pending = asyncio.all_tasks(loop)
+        for remaining in pending:
+            remaining.cancel()
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.run_until_complete(loop.shutdown_default_executor())
+        webtoon_downloader.logger.shutdown()
+        asyncio.set_event_loop(None)
+        loop.close()
+    ctx.exit(code)
 
 
 def run() -> None:

@@ -6,13 +6,11 @@ import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import Literal
 
 import httpx
 from furl import furl
-from httpx_retries import Retry, RetryTransport
 
-from webtoon_downloader.core.exceptions import DownloadError, ImageDownloadError, RateLimitedError
+from webtoon_downloader.core.retry import ResourceLimitError, RetryController, RetryPolicy, RetryStrategy
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +42,6 @@ List of random user agents of mobiles
 WebtoonURL = "https://www.webtoons.com"
 WebtoonMobileURL = "https://m.webtoons.com"
 
-RetryStrategy = Literal["exponential", "linear", "fixed"]
 
 DEFAULT_REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=30.0, write=30.0, pool=30.0)
 """Default timeout used for regular Webtoon page and API requests."""
@@ -61,34 +58,37 @@ class WebtoonHttpClient:
     and is configured with high limits for maximum connections and keep-alive connections.
     """
 
-    def __init__(self, proxy: str | None = None, retry_strategy: RetryStrategy | None = None):
+    def __init__(
+        self,
+        proxy: str | None = None,
+        retry_strategy: RetryStrategy | None = None,
+        *,
+        request_retries: int = 3,
+        retry_delay: float = 1.0,
+        retry_max_delay: float = 30.0,
+        request_timeout: float = 30.0,
+        image_read_timeout: float = 90.0,
+        max_image_bytes: int = 64 * 1024 * 1024,
+        request_time_budget: float = 300.0,
+    ):
         self.proxy = proxy
         self.retry_strategy = retry_strategy
+        self.request_retries = request_retries
+        self.max_image_bytes = max_image_bytes
+        self.image_timeout = httpx.Timeout(connect=15.0, read=image_read_timeout, write=30.0, pool=30.0)
+        self.retries = RetryController(RetryPolicy(retry_strategy, retry_delay, retry_max_delay, request_time_budget))
         self._client = httpx.AsyncClient(
             limits=httpx.Limits(max_connections=200, max_keepalive_connections=200),
             http2=True,
             headers=self._generate_headers(),
             follow_redirects=True,
-            proxy=self.proxy,
-            timeout=DEFAULT_REQUEST_TIMEOUT,
+            trust_env=False,
+            timeout=httpx.Timeout(connect=15.0, read=request_timeout, write=30.0, pool=30.0),
             transport=self._build_transport(),
         )
 
     def _build_transport(self) -> httpx.AsyncBaseTransport:
-        base_transport = httpx.AsyncHTTPTransport(http2=True)
-        if self.retry_strategy is None:
-            log.warning("No retry strategy provided; using default transport without retry")
-            return base_transport
-
-        # retry_on_exceptions = (*httpx_retries.Retry.RETRYABLE_EXCEPTIONS, h2.exceptions.InvalidBodyLengthError)
-        max_retries = 20
-        retry = {
-            "exponential": Retry(total=max_retries, backoff_factor=0.25, respect_retry_after_header=True),
-            "linear": Retry(total=max_retries, backoff_factor=0, backoff_jitter=1, respect_retry_after_header=True),
-            "fixed": Retry(total=max_retries, backoff_factor=0, backoff_jitter=0, respect_retry_after_header=True),
-        }.get(self.retry_strategy)
-
-        return RetryTransport(retry=retry, transport=base_transport)
+        return httpx.AsyncHTTPTransport(http2=True, proxy=self.proxy)
 
     async def __aenter__(self) -> WebtoonHttpClient:
         await self._client.__aenter__()
@@ -103,20 +103,22 @@ class WebtoonHttpClient:
         await self._client.__aexit__(exc_type, exc, traceback)
 
     async def get(self, url: str) -> httpx.Response:
-        if WebtoonMobileURL in url.lower():
-            return await self._client.get(url, headers={**self._client.headers, "user-agent": self._get_mobile_ua()})
-        return await self._client.get(url)
+        async def operation() -> httpx.Response:
+            headers = (
+                {**self._client.headers, "user-agent": self._get_mobile_ua()}
+                if WebtoonMobileURL in url.lower()
+                else None
+            )
+            response = await self._client.get(url, headers=headers)
+            response.raise_for_status()
+            return response
+
+        return await self.retries.run(operation, self.request_retries)
 
     @asynccontextmanager
     async def stream(self, method: str, url: str) -> AsyncGenerator[httpx.Response]:
         async with self._client.stream(method, url) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                if response.status_code == 429:
-                    raise DownloadError(
-                        url=url, cause=RateLimitedError(f"Rate limited while streaming from {url}")
-                    ) from exc
+            response.raise_for_status()
 
             yield response
 
@@ -142,21 +144,26 @@ class WebtoonHttpClient:
         async with self._client.stream(
             "GET",
             url,
-            timeout=IMAGE_STREAM_TIMEOUT,
+            timeout=self.image_timeout,
             headers={
                 "referer": WebtoonURL,
                 **self._generate_headers(),
             },
         ) as response:
-            try:
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                if response.status_code == 429:
-                    raise ImageDownloadError(
-                        url=url, cause=RateLimitedError(f"Rate limited while downloading image from {url}")
-                    ) from exc
+            response.raise_for_status()
 
             yield response
+
+    async def image_chunks(self, response: httpx.Response) -> AsyncGenerator[bytes]:
+        received = 0
+        async for chunk in response.aiter_bytes():
+            received += len(chunk)
+            if received > self.max_image_bytes:
+                raise ResourceLimitError("image_byte_limit")
+            yield chunk
+        length = response.headers.get("content-length")
+        if length and response.headers.get("content-encoding", "identity") == "identity" and received != int(length):
+            raise httpx.LocalProtocolError("InvalidBodyLengthError")
 
     def _get_mobile_ua(self) -> str:
         """Returns a randomly chosen user agent for mobile devices"""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
 from webtoon_downloader.core.webtoon.client import RetryStrategy
@@ -13,10 +14,10 @@ StorageType: TypeAlias = Literal["images", "zip", "cbz", "pdf"]
 """Valid option for storing the downloaded images."""
 
 
-DEFAULT_CONCURRENT_IMAGE_DOWNLOADS = 120
+DEFAULT_CONCURRENT_IMAGE_DOWNLOADS = 8
 """Default number of asynchronous image download workers. More == More likely to get server rate limited"""
 
-DEFAULT_CONCURRENT_CHAPTER_DOWNLOADS = 6
+DEFAULT_CONCURRENT_CHAPTER_DOWNLOADS = 2
 """Default number of asynchronous chapter download workers. This does not affect rate limiting or download speed since that is all controlled by the number of concurrent image downloads."""
 
 
@@ -69,5 +70,49 @@ class WebtoonDownloadOptions:
     concurrent_chapters: int = DEFAULT_CONCURRENT_CHAPTER_DOWNLOADS
     concurrent_pages: int = DEFAULT_CONCURRENT_IMAGE_DOWNLOADS
 
-    retry_strategy: RetryStrategy | None = None
+    retry_strategy: RetryStrategy | None = "exponential"
     proxy: str | None = None
+
+    request_retries: int = 3
+    page_retries: int = 3
+    chapter_retries: int = 1
+    retry_delay: float = 1.0
+    retry_max_delay: float = 30.0
+    request_timeout: float = 30.0
+    request_time_budget: float = 300.0
+    image_read_timeout: float = 90.0
+    chapter_time_budget: float = 900.0
+    resume: bool = False
+    verify: Literal["full", "quick"] = "full"
+    fail_fast: bool = False
+    result_file: str | None = None
+    retry_failed: str | None = None
+    max_image_bytes: int = 64 * 1024 * 1024
+    max_image_pixels: int = 100_000_000
+    minimum_free_bytes: int = 64 * 1024 * 1024
+    interruption_code: Literal[130, 143] = field(default=130, init=False)
+
+    def __post_init__(self) -> None:
+        counts = (self.request_retries, self.page_retries, self.chapter_retries, self.minimum_free_bytes)
+        limits = (
+            self.concurrent_chapters,
+            self.concurrent_pages,
+            self.request_timeout,
+            self.request_time_budget,
+            self.image_read_timeout,
+            self.chapter_time_budget,
+            self.max_image_bytes,
+            self.max_image_pixels,
+        )
+        if any(value < 0 for value in counts) or any(value <= 0 for value in limits):
+            raise ValueError("invalid_download_limits")
+        if any(not math.isfinite(value) for value in (*counts, *limits, self.retry_delay, self.retry_max_delay)):
+            raise ValueError("nonfinite_download_limits")
+        if self.retry_delay < 0 or self.retry_max_delay < self.retry_delay:
+            raise ValueError("invalid_retry_delays")
+        if self.verify not in {"full", "quick"}:
+            raise ValueError("invalid_verification_mode")
+        if self.latest and (self.start is not None or self.end is not None):
+            raise ValueError("latest_conflicts_with_range")
+        if self.retry_failed and (self.start is not None or self.end is not None or self.latest):
+            raise ValueError("retry_failed_conflicts_with_range")

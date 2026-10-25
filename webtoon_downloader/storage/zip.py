@@ -114,6 +114,7 @@ class AioFileBufferedZipWriter(AioZipWriter):
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _zip_file: zipfile.ZipFile = field(init=False)
     _temp_files: set[Path] = field(default_factory=set)
+    retain_temporary_files: bool = False
 
     @stream_error_handler
     async def __aenter__(self) -> AioFileBufferedZipWriter:
@@ -144,8 +145,9 @@ class AioFileBufferedZipWriter(AioZipWriter):
                     written += len(chunk)
             await self._add_to_zip(temp_file, item_name)
         finally:
-            temp_file.unlink(missing_ok=True)
-            self._temp_files.discard(temp_file)
+            if not self.retain_temporary_files:
+                temp_file.unlink(missing_ok=True)
+                self._temp_files.discard(temp_file)
 
         return written
 
@@ -159,7 +161,8 @@ class AioFileBufferedZipWriter(AioZipWriter):
             try:
                 self._zip_file.write(temp_file_path, arcname=item_name)
             finally:
-                temp_file_path.unlink()
+                if not self.retain_temporary_files:
+                    temp_file_path.unlink()
 
         async with self._lock:
             _write_to_zip()
@@ -173,5 +176,6 @@ class AioFileBufferedZipWriter(AioZipWriter):
     ) -> None:
         self._zip_file.close()
         # Cleanup of temporary files, if any were not handled already
-        for temp_file in self._temp_files:
-            temp_file.unlink(missing_ok=True)
+        if not self.retain_temporary_files:
+            for temp_file in self._temp_files:
+                temp_file.unlink(missing_ok=True)

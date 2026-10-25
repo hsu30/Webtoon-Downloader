@@ -133,7 +133,13 @@ class ChapterDownloader:
                 page = PageInfo(n, url, len(img_urls), chapter_info)
                 name = str(chapter_directory / self.file_name_generator.get_page_filename(page))
                 tasks.append(self._create_task(chapter_info, url, name, storage, quality))
-            res = await asyncio.gather(*tasks, return_exceptions=False)
+            try:
+                res = await asyncio.gather(*tasks, return_exceptions=False)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
             if series_metadata:
                 await self._write_comicinfo(storage, chapter_info, series_metadata, extractor, len(img_urls))
 
