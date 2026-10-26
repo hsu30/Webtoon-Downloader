@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from webtoon_downloader.core.webtoon.downloaders.options import WebtoonDownloadOptions
@@ -53,3 +55,20 @@ def test_download_options_default_to_number_title() -> None:
     options = WebtoonDownloadOptions(url="https://example.com/webtoon")
 
     assert options.chapter_mode == "number-title"
+
+
+@pytest.mark.parametrize(
+    "number,total,title,expected",
+    [
+        (50, 79, "第49話 證明(1/2)", "50-第49話 證明(1_2)"),
+        (51, 79, "第50話 證明(2/2)", "51-第50話 證明(2_2)"),
+        (212, 343, "[第2部第63話] 寄生蟲\uff081/2\uff09", "212-[第2部第63話] 寄生蟲\uff081_2\uff09"),
+        (213, 343, "[第2部第64話] 寄生蟲\uff082/2\uff09", "213-[第2部第64話] 寄生蟲\uff082_2\uff09"),
+        (85, 99, r"Part 1/2\3", "85-Part 1_2_3"),
+    ],
+)
+def test_slash_titles_always_produce_one_directory_component(number, total, title, expected):
+    chapter = replace(make_chapter(total_chapters=total), number=number, title=title)
+    path = SeparateFileNameGenerator(chapter_mode="number-title").get_chapter_directory(chapter)
+    assert path.name == expected
+    assert len(path.parts) == 1

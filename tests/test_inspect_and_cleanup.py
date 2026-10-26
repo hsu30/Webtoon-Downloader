@@ -243,3 +243,45 @@ async def test_cleanup_never_follows_a_link_to_user_content(output):
     assert result.exit_code == 1
     assert marker.read_text(encoding="utf-8") == "keep"
     assert link.is_symlink()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", ["第49話 證明(1/2)", "[第2部第63話] 寄生蟲\uff081/2\uff09"])
+async def test_new_slash_title_is_flat_and_legacy_layout_is_not_duplicated(output, title):
+    server = ReliableServer()
+    server.title_override = title
+    fresh = output / "fresh"
+    result = await run_source(server, download_options(str(fresh), start=2, end=2, keep_workspace=False))
+    assert result.is_complete
+    flat_name = "2-" + title.replace("/", "_")
+    assert sorted(p.name for p in fresh.iterdir()) == [flat_name]
+    assert all(p.is_file() for p in (fresh / flat_name).iterdir())
+
+    old = output / "legacy"
+    leaf = old / ("2-" + title)
+    leaf.mkdir(parents=True)
+    (leaf / "1.jpg").write_bytes(server.image)
+    (leaf / "2.jpg").write_bytes(server.image)
+    before = {str(p.relative_to(old)): p.read_bytes() for p in old.rglob("*.jpg")}
+    refused = await run_source(server, download_options(str(old), start=2, end=2, resume=True, keep_workspace=False))
+    assert refused.exit_code == 1
+    assert "legacy_nested_chapter_requires_manual_migration" in refused.chapters[0].error
+    assert not (old / flat_name).exists()
+    assert before == {str(p.relative_to(old)): p.read_bytes() for p in old.rglob("*.jpg")}
+
+
+@pytest.mark.asyncio
+async def test_nested_cached_target_cannot_recreate_legacy_directory(output):
+    server = ReliableServer()
+    server.title_override = "Part (1/2)"
+    assert (await run_source(server, download_options(str(output), start=2, end=2))).is_complete
+    manifest = output / ".webtoon-downloader/zh-hant-webtoon-4601/chapters/2/manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["target"] = "2-Part (1/2)"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    before = {p: p.read_bytes() for p in output.glob("2-Part*/*.jpg")}
+    result = await run_source(server, download_options(str(output), start=2, end=2, resume=True))
+    assert result.exit_code == 1
+    assert "legacy_nested_manifest_requires_manual_migration" in result.chapters[0].error
+    assert not (output / "2-Part (1").exists()
+    assert before == {p: p.read_bytes() for p in output.glob("2-Part*/*.jpg")}

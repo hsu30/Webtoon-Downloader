@@ -374,8 +374,24 @@ class ReliableDownloader:
             "failures": [],
         }
 
+    def _reject_legacy_target(self, chapter: ChapterInfo, target: str) -> None:
+        prefix = chapter.title.split("/", 1)[0]
+        if "/" in chapter.title:
+            legacy = [
+                path.name
+                for path in self.root.iterdir()
+                if path.is_dir() and re.fullmatch(rf"0*{chapter.number}-{re.escape(prefix)}", path.name)
+            ]
+            if legacy:
+                message = (
+                    f"legacy_nested_chapter_requires_manual_migration: chapter={chapter.number}; "
+                    f"existing={legacy!r}; canonical={target!r}; no chapter data moved or duplicated"
+                )
+                raise IntegrityError(message)
+
     def _existing_target(self, chapter: ChapterInfo, target: str) -> str:
         # A growing inventory can change zero padding (09 -> 009). Preserve existing folder names.
+        self._reject_legacy_target(chapter, target)
         matches = [
             path
             for path in self.root.iterdir()
@@ -409,6 +425,14 @@ class ReliableDownloader:
         ):
             raise IntegrityError("manifest_identity_mismatch")
         checked_path(self.root, manifest["target"])
+        if (
+            manifest.get("kind") == "images"
+            and manifest.get("separate") is True
+            and len(Path(manifest["target"]).parts) != 1
+        ):
+            raise IntegrityError("legacy_nested_manifest_requires_manual_migration")
+        if self.options.save_as == "images" and self.options.separate and self.options.chapter_mode == "number-title":
+            self._reject_legacy_target(chapter, manifest["target"])
         if not isinstance(manifest.get("expected"), list) or not isinstance(manifest.get("pages"), list):
             raise IntegrityError("invalid_manifest_pages")
 
