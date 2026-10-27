@@ -1577,7 +1577,7 @@ wheels = [
 
 [[package]]
 name = "webtoon-downloader"
-version = "2.4.0+numbertitle.5"
+version = "2.4.0+numbertitle.6"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

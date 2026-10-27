@@ -1,6 +1,6 @@
 [project]
 name = "webtoon_downloader"
-version = "2.4.0+numbertitle.5"
+version = "2.4.0+numbertitle.6"
 description = "Download and verify public Webtoon chapters as images, ZIP, CBZ, or PDF."
 authors = [{ name = "Ali Taibi", email = "zehinadev@gmail.com" }]
 maintainers = [{ name = "hsu30" }]

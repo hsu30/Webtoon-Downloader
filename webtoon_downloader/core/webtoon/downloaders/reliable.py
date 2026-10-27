@@ -321,6 +321,7 @@ class ReliableDownloader:
         previous = read_json(path) if path.exists() else {}
         if previous:
             self._validate_manifest(previous, chapter)
+            previous = self._reconcile_image_target(chapter, previous)
             if previous.get("signature") == signature:
                 self._validate_page_list(previous, urls, work)
                 return previous
@@ -347,7 +348,7 @@ class ReliableDownloader:
         )
         if previous.get("kind") == self.options.save_as and previous.get("separate") == self.options.separate:
             target = previous["target"]
-        elif self.options.save_as == "images" and self.options.separate and self.options.chapter_mode == "number-title":
+        if self.options.save_as == "images" and self.options.separate and self.options.chapter_mode == "number-title":
             target = self._existing_target(chapter, target)
         checked_path(self.root, target)
         settings = [self.options.image_format.lower(), self.options.quality]
@@ -369,7 +370,13 @@ class ReliableDownloader:
             "expected": expected,
             "pages": reusable,
             "completed": False,
-            "owned_target": previous.get("owned_target", False),
+            "owned_target": (
+                previous.get("owned_target", False)
+                if previous.get("kind") == self.options.save_as
+                and previous.get("separate") == self.options.separate
+                and previous.get("target") == target
+                else False
+            ),
             "previous_names": [item["name"] for item in previous.get("expected", [])],
             "failures": [],
         }
@@ -389,18 +396,40 @@ class ReliableDownloader:
                 )
                 raise IntegrityError(message)
 
+    def _reconcile_image_target(self, chapter: ChapterInfo, manifest: dict[str, Any]) -> dict[str, Any]:
+        if (
+            self.options.save_as != "images"
+            or not self.options.separate
+            or self.options.chapter_mode != "number-title"
+            or manifest.get("kind") != "images"
+            or manifest.get("separate") is not True
+        ):
+            return manifest
+        old = manifest["target"]
+        number = re.match(r"^(\d+)(?:[-_]|$)", old)
+        if number and int(number[1]) != chapter.number:
+            raise IntegrityError("cached_chapter_number_changed_within_source_order")
+        if number is None and checked_path(self.root, old).exists():
+            return manifest  # Preserve a trusted title-only target belonging to the same stable episode ID.
+        candidate = self._existing_target(chapter, old)
+        if candidate == old:
+            return manifest
+        # A stale cache does not establish ownership of a different existing folder.
+        # Its files must match the entire fresh page/hash contract before adoption.
+        return {**manifest, "target": candidate, "owned_target": False, "completed": False}
+
     def _existing_target(self, chapter: ChapterInfo, target: str) -> str:
-        # A growing inventory can change zero padding (09 -> 009). Preserve existing folder names.
+        # Captions and zero padding may change. A number is only a candidate selector;
+        # _publish_single still requires full artifact verification before adopting user data.
         self._reject_legacy_target(chapter, target)
-        matches = [
-            path
-            for path in self.root.iterdir()
-            if path.is_dir()
-            and not path.is_symlink()
-            and re.fullmatch(rf"0*{chapter.number}-{re.escape(target.split('-', 1)[1])}", path.name)
-        ]
+        matches = [path for path in self.root.iterdir() if re.fullmatch(rf"0*{chapter.number}(?:[-_].*)?", path.name)]
         if len(matches) > 1:
             raise IntegrityError("ambiguous_existing_chapter_folders")
+        if matches:
+            candidate = matches[0]
+            checked_path(self.root, candidate.name)
+            if not candidate.is_dir() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
+                raise IntegrityError("unsafe_existing_chapter_target")
         return matches[0].name if matches else target
 
     def _validate_page_list(self, previous: dict[str, Any], urls: list[str], work: Path) -> None:
